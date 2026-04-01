@@ -2,11 +2,13 @@ import os
 import json
 import requests
 import psycopg2
-from datetime import datetime, timedelta
+import pendulum
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import datetime, timedelta
 from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.exceptions import AirflowRescheduleException
 
 # --- Environment Loading ---
 def load_env_universally():
@@ -46,7 +48,7 @@ def get_voi_token():
 def extract_and_load(endpoint, table_name, **kwargs):
     """
     Generic function to fetch data and load it into PostgreSQL.
-    kwargs['data_interval_end'] provides the current execution hour for MDS parameters.
+    Handles 404 by rescheduling the task for later.
     """
     token = get_voi_token()
     headers = {
@@ -54,11 +56,13 @@ def extract_and_load(endpoint, table_name, **kwargs):
         "Accept": "application/vnd.mds+json;version=2.0"
     }
 
-    # Determine time parameters for /trips or /events
-    # MDS 2.0 expects YYYY-MM-DDTHH
-    target_time = kwargs['data_interval_end'].strftime("%Y-%m-%dT%H")
-    params = {}
+    # MDS 2.0 targets the end of the data interval
+    stabilized_window = kwargs['data_interval_start'] - timedelta(hours=1)
+    target_time = stabilized_window.strftime("%Y-%m-%dT%H")
     
+    print(f"Requesting stabilized data for hour: {target_time}")
+
+    params = {}
     if endpoint == "trips":
         params = {"end_time": target_time}
     elif endpoint == "events/historical":
@@ -66,7 +70,13 @@ def extract_and_load(endpoint, table_name, **kwargs):
 
     url = f"{VOI_MDS_URL}/{VOI_ZONE_ID}/{endpoint}"
     response = requests.get(url, headers=headers, params=params)
-    response.raise_for_status()
+
+    # Handle the 404 Case: Data is not ready yet (VOI processing delay)
+    if response.status_code == 404:
+        print(f"Data for {target_time} not found. VOI might still be processing. Rescheduling...")      
+        # FIX: Generate a timezone-aware UTC timestamp using pendulum
+        reschedule_time = pendulum.now('UTC').add(minutes=10)
+        raise AirflowRescheduleException(reschedule_date=reschedule_time)
     data = response.json()
 
     # Database Loading
@@ -108,8 +118,8 @@ with DAG(
     'voi_mds_ingestion_hourly',
     default_args=default_args,
     description='Extract VOI MDS 2.0 data and load to Local Postgres RAW layer',
-    schedule='@hourly',
-    start_date=datetime(2024, 6, 1),
+    schedule='30 * * * *',
+    start_date=datetime(2026, 3, 30),
     catchup=False,
     tags=['voi', 'mds', 'raw']
 ) as dag:

@@ -33,7 +33,7 @@ dbt_project/logs/
 .vscode/
 .idea/
 structure.txt
-
+airflow/config/airflow.cfg
 # --- Inclusions ---
 # Ensure the infrastructure file is always tracked
 !docker-compose.yaml
