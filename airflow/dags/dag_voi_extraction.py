@@ -5,7 +5,6 @@ import psycopg2
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
-
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -109,7 +108,7 @@ with DAG(
     'voi_mds_ingestion_hourly',
     default_args=default_args,
     description='Extract VOI MDS 2.0 data and load to Local Postgres RAW layer',
-    schedule_interval='@hourly',
+    schedule='@hourly',
     start_date=datetime(2024, 6, 1),
     catchup=False,
     tags=['voi', 'mds', 'raw']
