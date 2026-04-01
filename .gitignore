@@ -1,0 +1,39 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# --- Airflow ---
+# Ignore logs as they are instance-specific and very large
+logs/
+# Only ignore these if you aren't putting custom logic in them
+# config/
+# plugins/
+airflow.db
+airflow-webserver.pid
+
+# --- Docker ---
+# Ignore the local folder if you map your Postgres volume to a path
+postgres-data/
+.docker-build/
+
+# --- dbt ---
+# Ignore the compiled code and logs
+dbt_project/target/
+dbt_project/dbt_modules/
+dbt_project/dbt_packages/
+dbt_project/logs/
+
+# --- OS / IDE ---
+.DS_Store
+.vscode/
+.idea/
+structure.txt
+
+# --- Inclusions ---
+# Ensure the infrastructure file is always tracked
+!docker-compose.yaml
