@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 # --- Environment Setup ---
-project_root = Path(__file__).resolve().parent.parent
+project_root = Path(__file__).resolve().parent.parent.parent
 env_path = project_root / '.env'
 load_dotenv(dotenv_path=env_path)
 
