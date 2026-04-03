@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.providers.standard.operators.python import BashOperator
+from airflow.providers.standard.operators.bash import BashOperator
 from airflow.exceptions import AirflowRescheduleException
 
 # --- Environment Loading ---
@@ -28,7 +28,7 @@ load_env_universally()
 VOI_ZONE_ID = os.getenv("VOI_ZONE_ID")
 VOI_AUTH_URL = os.getenv("VOI_AUTH_URL")
 VOI_MDS_URL = os.getenv("VOI_MDS_URL")
-PG_HOST = os.getenv("PG_HOST") # Inside Docker, this remains 'host.docker.internal'
+PG_HOST = os.getenv("PG_HOST") 
 PG_PORT = os.getenv("PG_PORT", "5432")
 PG_DATABASE = os.getenv("PG_DATABASE")
 PG_USER = os.getenv("PG_USER")
@@ -72,12 +72,12 @@ def extract_and_load(endpoint, table_name, **kwargs):
     url = f"{VOI_MDS_URL}/{VOI_ZONE_ID}/{endpoint}"
     response = requests.get(url, headers=headers, params=params)
 
-    # Handle the 404 Case: Data is not ready yet (VOI processing delay)
+    # Handle the 404 Case: Data is not ready yet
     if response.status_code == 404:
         print(f"Data for {target_time} not found. VOI might still be processing. Rescheduling...")      
-        # FIX: Generate a timezone-aware UTC timestamp using pendulum
         reschedule_time = pendulum.now('UTC').add(minutes=10)
         raise AirflowRescheduleException(reschedule_date=reschedule_time)
+    
     data = response.json()
 
     # Database Loading
@@ -105,19 +105,6 @@ def extract_and_load(endpoint, table_name, **kwargs):
     conn.close()
     print(f"Successfully loaded {endpoint} data into {table_name}")
 
-transform_voi_data = BashOperator(
-    task_id="transform_voi_json",
-    # We 'cd' into the folder we mounted in the docker-compose
-    bash_command="cd /opt/airflow/voi_dbt && dbt run --models stg_voi_vehicles",
-    env={
-        'PG_HOST': os.getenv('PG_HOST'),
-        'PG_USER': os.getenv('PG_USER'),
-        'PG_PASS': os.getenv('PG_PASS'),
-        'PG_PORT': os.getenv('PG_PORT'),
-        'PG_DATABASE': os.getenv('PG_DATABASE'),
-        'DBT_PROFILES_DIR': '/opt/airflow/voi_dbt'
-    }
-)    
 
 # --- DAG Definition ---
 
@@ -165,21 +152,21 @@ with DAG(
     )
 
     # 2. Transformation Task (dbt)
-    # This runs inside the container using the baked-in dbt-postgres
+    # Using the verified absolute path and the 'cwd' parameter for reliability
     transform_voi_data = BashOperator(
         task_id="transform_voi_json",
-        bash_command="cd /opt/airflow/voi_dbt && dbt run --models stg_voi_vehicles",
+        bash_command='/home/airflow/.local/bin/dbt run --select stg_voi_vehicles',
+        cwd='/opt/airflow/voi_dbt',
         env={
+            **os.environ,
             'PG_HOST': PG_HOST,
             'PG_USER': PG_USER,
             'PG_PASS': PG_PASS,
             'PG_PORT': PG_PORT,
             'PG_DATABASE': PG_DATABASE,
-            'DBT_PROFILES_DIR': '/opt/airflow/voi_dbt'
+            'DBT_PROFILES_DIR': '/opt/airflow/voi_dbt' # Point to the folder with profiles.yml
         }
     )
 
     # --- Dependency Mapping ---
-    # The four extraction tasks run in parallel. 
-    # Once ALL of them succeed, the dbt transformation starts.
     [task_fetch_vehicles, task_fetch_status, task_fetch_trips, task_fetch_events] >> transform_voi_data

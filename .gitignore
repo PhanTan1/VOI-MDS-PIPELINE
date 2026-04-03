@@ -36,4 +36,3 @@ structure.txt
 airflow/config/airflow.cfg
 # --- Inclusions ---
 # Ensure the infrastructure file is always tracked
-docker-compose.yaml
