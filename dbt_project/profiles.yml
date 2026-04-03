@@ -1,0 +1,12 @@
+voi_mds:
+  target: prod
+  outputs:
+    prod:
+      type: postgres
+      host: "{{ env_var('PG_HOST') }}"
+      user: "{{ env_var('PG_USER') }}"
+      password: "{{ env_var('PG_PASS') }}"
+      port: "{{ env_var('PG_PORT') | as_number }}"
+      dbname: "{{ env_var('PG_DATABASE') }}"
+      schema: public # This is only used if no +schema is defined
+      threads: 4

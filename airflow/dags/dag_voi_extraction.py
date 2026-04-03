@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import BashOperator
 from airflow.exceptions import AirflowRescheduleException
 
 # --- Environment Loading ---
@@ -104,6 +105,20 @@ def extract_and_load(endpoint, table_name, **kwargs):
     conn.close()
     print(f"Successfully loaded {endpoint} data into {table_name}")
 
+transform_voi_data = BashOperator(
+    task_id="transform_voi_json",
+    # We 'cd' into the folder we mounted in the docker-compose
+    bash_command="cd /opt/airflow/voi_dbt && dbt run --models stg_voi_vehicles",
+    env={
+        'PG_HOST': os.getenv('PG_HOST'),
+        'PG_USER': os.getenv('PG_USER'),
+        'PG_PASS': os.getenv('PG_PASS'),
+        'PG_PORT': os.getenv('PG_PORT'),
+        'PG_DATABASE': os.getenv('PG_DATABASE'),
+        'DBT_PROFILES_DIR': '/opt/airflow/voi_dbt'
+    }
+)    
+
 # --- DAG Definition ---
 
 default_args = {
@@ -117,13 +132,14 @@ default_args = {
 with DAG(
     'voi_mds_ingestion_hourly',
     default_args=default_args,
-    description='Extract VOI MDS 2.0 data and load to Local Postgres RAW layer',
+    description='Extract VOI MDS 2.0 data and load to External Postgres RAW layer',
     schedule='30 * * * *',
     start_date=datetime(2026, 3, 30),
     catchup=False,
-    tags=['voi', 'mds', 'raw']
+    tags=['voi', 'mds', 'raw', 'dbt']
 ) as dag:
 
+    # 1. Extraction Tasks
     task_fetch_vehicles = PythonOperator(
         task_id='fetch_voi_vehicles',
         python_callable=extract_and_load,
@@ -148,5 +164,22 @@ with DAG(
         op_kwargs={'endpoint': 'events/historical', 'table_name': 'VOI_EVENTS'}
     )
 
-    # Parallel execution
-    [task_fetch_vehicles, task_fetch_status, task_fetch_trips, task_fetch_events]
+    # 2. Transformation Task (dbt)
+    # This runs inside the container using the baked-in dbt-postgres
+    transform_voi_data = BashOperator(
+        task_id="transform_voi_json",
+        bash_command="cd /opt/airflow/voi_dbt && dbt run --models stg_voi_vehicles",
+        env={
+            'PG_HOST': PG_HOST,
+            'PG_USER': PG_USER,
+            'PG_PASS': PG_PASS,
+            'PG_PORT': PG_PORT,
+            'PG_DATABASE': PG_DATABASE,
+            'DBT_PROFILES_DIR': '/opt/airflow/voi_dbt'
+        }
+    )
+
+    # --- Dependency Mapping ---
+    # The four extraction tasks run in parallel. 
+    # Once ALL of them succeed, the dbt transformation starts.
+    [task_fetch_vehicles, task_fetch_status, task_fetch_trips, task_fetch_events] >> transform_voi_data

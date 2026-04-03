@@ -1,0 +1,30 @@
+# dbt_project.yml
+name: 'voi_mds'
+version: '1.0.0'
+config-version: 2
+
+# This must match the name used in your profiles.yml
+profile: 'voi_mds'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  voi_mds:
+    # This configuration applies to everything in models/staging/
+    staging:
+      +materialized: view
+      +schema: PROD_MICROMOBILITY_STAGING
+    
+    # This configuration applies to everything in models/marts/
+    marts:
+      +materialized: table
+      +schema: PROD_MICROMOBILITY_ANALYTICS
