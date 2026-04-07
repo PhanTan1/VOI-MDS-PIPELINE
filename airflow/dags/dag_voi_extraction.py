@@ -10,6 +10,7 @@ from airflow import DAG
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.exceptions import AirflowRescheduleException
+from airflow.sdk import TaskGroup
 
 # --- Environment Loading ---
 def load_env_universally():
@@ -105,6 +106,16 @@ def extract_and_load(endpoint, table_name, **kwargs):
     conn.close()
     print(f"Successfully loaded {endpoint} data into {table_name}")
 
+# --- Common dbt Environment ---
+dbt_env = {
+    **os.environ,
+    'PG_HOST': PG_HOST,
+    'PG_USER': PG_USER,
+    'PG_PASS': PG_PASS,
+    'PG_PORT': PG_PORT,
+    'PG_DATABASE': PG_DATABASE,
+    'DBT_PROFILES_DIR': '/opt/airflow/voi_dbt'
+}
 
 # --- DAG Definition ---
 
@@ -126,47 +137,57 @@ with DAG(
     tags=['voi', 'mds', 'raw', 'dbt']
 ) as dag:
 
-    # 1. Extraction Tasks
-    task_fetch_vehicles = PythonOperator(
-        task_id='fetch_voi_vehicles',
-        python_callable=extract_and_load,
-        op_kwargs={'endpoint': 'vehicles', 'table_name': 'VOI_VEHICLES'}
-    )
+    with TaskGroup("voi_ingestion") as ingestion_group:
+        
+        # 1. Registry must be extracted first
+        task_fetch_vehicles = PythonOperator(
+            task_id='fetch_voi_vehicles',
+            python_callable=extract_and_load,
+            op_kwargs={'endpoint': 'vehicles', 'table_name': 'VOI_VEHICLES'}
+        )
 
-    task_fetch_status = PythonOperator(
-        task_id='fetch_voi_status',
-        python_callable=extract_and_load,
-        op_kwargs={'endpoint': 'vehicles/status', 'table_name': 'VOI_VEHICLES_STATUS'}
-    )
+        # 2. Status, Trips, and Events can run in parallel afterward
+        task_fetch_status = PythonOperator(
+            task_id='fetch_voi_status',
+            python_callable=extract_and_load,
+            op_kwargs={'endpoint': 'vehicles/status', 'table_name': 'VOI_VEHICLES_STATUS'}
+        )
 
-    task_fetch_trips = PythonOperator(
-        task_id='fetch_voi_trips',
-        python_callable=extract_and_load,
-        op_kwargs={'endpoint': 'trips', 'table_name': 'VOI_TRIPS'}
-    )
+        task_fetch_trips = PythonOperator(
+            task_id='fetch_voi_trips',
+            python_callable=extract_and_load,
+            op_kwargs={'endpoint': 'trips', 'table_name': 'VOI_TRIPS'}
+        )
 
-    task_fetch_events = PythonOperator(
-        task_id='fetch_voi_events',
-        python_callable=extract_and_load,
-        op_kwargs={'endpoint': 'events/historical', 'table_name': 'VOI_EVENTS'}
-    )
+        task_fetch_events = PythonOperator(
+            task_id='fetch_voi_events',
+            python_callable=extract_and_load,
+            op_kwargs={'endpoint': 'events/historical', 'table_name': 'VOI_EVENTS'}
+        )
 
-    # 2. Transformation Task (dbt)
-    # Using the verified absolute path and the 'cwd' parameter for reliability
-    transform_voi_data = BashOperator(
-        task_id="transform_voi_json",
-        bash_command='/home/airflow/.local/bin/dbt run --select stg_voi_vehicles',
-        cwd='/opt/airflow/voi_dbt',
-        env={
-            **os.environ,
-            'PG_HOST': PG_HOST,
-            'PG_USER': PG_USER,
-            'PG_PASS': PG_PASS,
-            'PG_PORT': PG_PORT,
-            'PG_DATABASE': PG_DATABASE,
-            'DBT_PROFILES_DIR': '/opt/airflow/voi_dbt' # Point to the folder with profiles.yml
-        }
-    )
+        # Registry enforces referential integrity for the others
+        task_fetch_vehicles >> [task_fetch_status, task_fetch_trips, task_fetch_events]
 
-    # --- Dependency Mapping ---
-    [task_fetch_vehicles, task_fetch_status, task_fetch_trips, task_fetch_events] >> transform_voi_data
+    with TaskGroup("voi_transformation") as dbt_group:
+        
+        # 1. Transform the registry first so the master UUID mapping is updated
+        dbt_run_registry = BashOperator(
+            task_id="dbt_stg_registry",
+            bash_command='/home/airflow/.local/bin/dbt run --select stg_voi_vehicles',
+            cwd='/opt/airflow/voi_dbt',
+            env=dbt_env
+        )
+
+        # 2. Run the remaining staging models AND the final marts.
+        # Using 'fct_trips_vianova' (the filename) instead of 'f_trip' (the alias)
+        dbt_run_marts = BashOperator(
+            task_id="dbt_marts_status_trips",
+            bash_command='/home/airflow/.local/bin/dbt run --select stg_voi_vehicles_status stg_voi_trips fct_vehicles_status fct_trips_vianova',
+            cwd='/opt/airflow/voi_dbt',
+            env=dbt_env
+        )
+
+        dbt_run_registry >> dbt_run_marts
+
+    # --- Pipeline Execution Flow ---
+    ingestion_group >> dbt_group

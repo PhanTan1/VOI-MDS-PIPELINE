@@ -1,7 +1,7 @@
 {{
     config(
         materialized='incremental',
-        unique_key='TRIP_ID',
+        unique_key='"TRIP_ID"',
         alias='F_TRIP',
         schema='PROD_MICROMOBILITY_ANALYTICS',
         on_schema_change='append_new_columns'
