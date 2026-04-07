@@ -1,25 +1,39 @@
-{{ config(materialized='view', schema='PROD_MICROMOBILITY_STAGING') }}
+{{ config(materialized='view') }}
 
-WITH raw_data AS (
-    SELECT content, file_ts, load_ts
-    FROM {{ source('raw_voi', 'VOI_VEHICLES_STATUS') }}
+WITH raw_trips AS (
+    SELECT content FROM {{ source('raw_voi', 'VOI_TRIPS') }}
 ),
 
-unnested AS (
-    SELECT
-        jsonb_array_elements(content->'vehicles_status') AS item
-    FROM raw_data
+unnested_trips AS (
+    SELECT jsonb_array_elements(content->'trips') AS item 
+    FROM raw_trips
 )
 
-SELECT
-    item->>'device_id' AS device_id,
-    -- MDS 2.0: Extracting the first element of arrays
-    item->'last_event'->'event_types'->>0 AS event_type,
-    item->'last_event'->'trip_ids'->>0 AS trip_id,
-    item->'last_event'->>'vehicle_state' AS vehicle_state,
-    -- Coordinates
-    (item->'last_telemetry'->'location'->>'lat')::float AS lat,
-    (item->'last_telemetry'->'location'->>'lng')::float AS lon,
-    -- Timestamp (Unix ms to Timestamp)
-    TO_TIMESTAMP((item->'last_telemetry'->>'timestamp')::bigint / 1000.0) AS reported_at
-FROM unnested
+SELECT DISTINCT
+    t.item->>'trip_id' AS trip_id,
+    t.item->>'device_id' AS device_id,
+    
+    -- Stealing the readable ID and Type from your Vehicles table!
+    v.vehicle_id AS vehicle_short_id,
+    v.vehicle_type AS vehicle_type,
+    
+    TO_TIMESTAMP((t.item->>'start_time')::bigint / 1000.0) AS start_ts,
+    TO_TIMESTAMP((t.item->>'end_time')::bigint / 1000.0) AS end_ts,
+    (t.item->>'duration')::numeric AS trip_duration,
+    (t.item->>'distance')::numeric AS trip_distance,
+    
+    (t.item->'start_location'->>'lat')::float AS start_lat,
+    (t.item->'start_location'->>'lng')::float AS start_lon,
+    (t.item->'end_location'->>'lat')::float AS end_lat,
+    (t.item->'end_location'->>'lng')::float AS end_lon,
+    
+    COALESCE(
+        ST_GeomFromGeoJSON(t.item->'route'),
+        ST_MakeLine(
+            ST_SetSRID(ST_MakePoint((t.item->'start_location'->>'lng')::float, (t.item->'start_location'->>'lat')::float), 4326),
+            ST_SetSRID(ST_MakePoint((t.item->'end_location'->>'lng')::float, (t.item->'end_location'->>'lat')::float), 4326)
+        )
+    )::geometry(LineString, 4326) AS route_geom
+FROM unnested_trips t
+LEFT JOIN {{ ref('stg_voi_vehicles') }} v 
+    ON t.item->>'device_id' = v.device_id
