@@ -4,11 +4,16 @@ models:
   - name: fct_vehicles_status
     description: "Real-time telemetry for Brussels mobility fleet"
     columns:
-      - name: '"VEHICLE_ID"'  # Note: double quotes inside single quotes
+      - name: '"UID"' # The primary key we built
         tests:
+          - unique
+          - not_null
+      - name: '"VEHICLE_ID"'
+        tests:
+          - not_null
           - relationships:
               to: ref('stg_voi_vehicles')
-              field: vehicle_id  # This is unquoted/lowercase in the staging model
+              field: vehicle_id # Verify this is lowercase in stg_voi_vehicles.sql
 
   - name: fct_trips_vianova
     description: "Historical trip data with precise PostGIS distance and routes"
@@ -19,6 +24,10 @@ models:
           - not_null
       - name: '"VEHICLE_ID"'
         tests:
+          - not_null
           - relationships:
               to: ref('stg_voi_vehicles')
               field: vehicle_id
+      - name: '"START_TS"'
+        tests:
+          - not_null
