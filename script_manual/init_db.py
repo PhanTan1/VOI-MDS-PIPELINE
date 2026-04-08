@@ -66,6 +66,11 @@ def setup_infrastructure():
     cur = conn.cursor()
     
     try:
+        # --- PHASE 0: Enable PostGIS (CRITICAL) ---
+        print("Enabling PostGIS extension...")
+        cur.execute('CREATE EXTENSION IF NOT EXISTS postgis;')
+        print("PostGIS extension verified.")
+
         # --- PHASE 1: Schema Creation ---
         print("Initializing schemas in uppercase...")
         schemas = [
@@ -78,12 +83,11 @@ def setup_infrastructure():
         print(f"Schemas verified: {', '.join(schemas)}")
 
         # --- PHASE 2: Table Creation (VOI MDS 2.0) ---
-        # Structure: content (jsonb), filename (varchar), file_ts (timestamp), load_ts (timestamp)
-        # No surrogate ID column as requested.
         voi_tables = ["VOI_TRIPS", "VOI_VEHICLES", "VOI_VEHICLES_STATUS", "VOI_EVENTS"]
 
         print("Creating tables in PROD_MICROMOBILITY_RAW...")
         for table in voi_tables:
+            # We use IF NOT EXISTS so we don't wipe your SQL Dump data!
             query = f'''
                 CREATE TABLE IF NOT EXISTS "PROD_MICROMOBILITY_RAW"."{table}" (
                     content JSONB,
