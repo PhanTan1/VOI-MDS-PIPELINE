@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: fct_vehicles_status
+    description: "Real-time telemetry for Brussels mobility fleet"
+    columns:
+      - name: '"VEHICLE_ID"'  # Note: double quotes inside single quotes
+        tests:
+          - relationships:
+              to: ref('stg_voi_vehicles')
+              field: vehicle_id  # This is unquoted/lowercase in the staging model
+
+  - name: fct_trips_vianova
+    description: "Historical trip data with precise PostGIS distance and routes"
+    columns:
+      - name: '"TRIP_ID"'
+        tests:
+          - unique
+          - not_null
+      - name: '"VEHICLE_ID"'
+        tests:
+          - relationships:
+              to: ref('stg_voi_vehicles')
+              field: vehicle_id

@@ -14,22 +14,23 @@ SELECT DISTINCT
     t.item->>'trip_id' AS trip_id,
     r.vehicle_id AS vehicle_short_id,
     r.vehicle_type AS vehicle_type,
+    'Voi' AS provider_name, -- Added for professional integration logic
     
-    -- Extraction
+    -- Timestamps (ms to seconds)
     TO_TIMESTAMP((t.item->>'start_time')::bigint / 1000.0) AS start_ts,
     TO_TIMESTAMP((t.item->>'end_time')::bigint / 1000.0) AS end_ts,
     (t.item->>'duration')::numeric AS trip_duration,
     
-    -- Extract raw distance. Postgres ::float handles scientific notation naturally.
-    (t.item->>'distance')::float AS trip_distance,
+    -- Distance: Keep the provider's value as the primary metric
+    (t.item->>'distance')::float AS trip_distance_meters,
     
-    -- Individual coordinates (floats handle '4.305e+00' automatically)
+    -- Coordinates
     (t.item->'start_location'->>'lat')::float AS start_lat,
     (t.item->'start_location'->>'lng')::float AS start_lon,
     (t.item->'end_location'->>'lat')::float AS end_lat,
     (t.item->'end_location'->>'lng')::float AS end_lon,
     
-    -- Geometry Construction
+    -- Geometry Construction: Robust fallback to a 2-point line
     COALESCE(
         ST_GeomFromGeoJSON(t.item->'route'),
         ST_MakeLine(
