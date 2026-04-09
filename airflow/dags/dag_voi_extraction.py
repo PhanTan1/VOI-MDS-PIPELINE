@@ -63,7 +63,7 @@ def extract_and_load(endpoint, table_name, provider, **kwargs):
     filename = f"{provider}_{endpoint.replace('/', '_')}_{target_time}.json"
 
     pg_hook = PostgresHook(postgres_conn_id='postgres_raw')
-    query = f'INSERT INTO "PROD_MICROMOBILITY_RAW"."{table_name}" (content, filename, file_ts) VALUES (%s, %s, %s)'
+    query = f'INSERT INTO "MICROMOBILITY_RAW"."{table_name}" (content, filename, file_ts) VALUES (%s, %s, %s)'
     pg_hook.run(query, parameters=(json.dumps(data), filename, kwargs['data_interval_end']))
 
 # --- DAG Definition ---
@@ -117,7 +117,7 @@ with DAG(
             target_name="prod",
             profile_mapping=PostgresUserPasswordProfileMapping(
                 conn_id="postgres_raw",
-                profile_args={"schema": "PROD_MICROMOBILITY_STAGING"},
+                profile_args={"schema": "MICROMOBILITY_STAGING"},
             ),
         ),
         execution_config=ExecutionConfig(dbt_executable_path="/home/airflow/.local/bin/dbt"),
