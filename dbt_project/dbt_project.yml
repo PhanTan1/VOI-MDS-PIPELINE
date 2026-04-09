@@ -28,3 +28,10 @@ models:
     marts:
       +materialized: table
       +schema: MICROMOBILITY_ANALYTICS
+
+      # dbt_project.yml
+
+quoting:
+  database: true
+  schema: true
+  identifier: true
