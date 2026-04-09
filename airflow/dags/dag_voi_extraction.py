@@ -12,6 +12,8 @@ from airflow.sdk import TaskGroup
 
 from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, ExecutionConfig
 from cosmos.profiles import PostgresUserPasswordProfileMapping
+from cosmos.config import RenderConfig
+from cosmos.constants import TestBehavior
 
 # --- Dynamic Configuration ---
 def get_provider_configs(provider):
@@ -121,6 +123,9 @@ with DAG(
             ),
         ),
         execution_config=ExecutionConfig(dbt_executable_path="/home/airflow/.local/bin/dbt"),
+        render_config=RenderConfig(
+            test_behavior=TestBehavior.AFTER_ALL
+        )
     )
 
     ingestion_group >> dbt_group
