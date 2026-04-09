@@ -117,7 +117,7 @@ with DAG(
             target_name="prod",
             profile_mapping=PostgresUserPasswordProfileMapping(
                 conn_id="postgres_raw",
-                profile_args={"schema": "MICROMOBILITY_STAGING"},
+                profile_args={"schema": "public"},
             ),
         ),
         execution_config=ExecutionConfig(dbt_executable_path="/home/airflow/.local/bin/dbt"),
