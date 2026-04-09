@@ -5,7 +5,7 @@
         materialized='incremental',
         unique_key='"TRIP_ID"',
         alias='F_TRIP',
-        schema='PROD_MICROMOBILITY_ANALYTICS',
+        schema='MICROMOBILITY_ANALYTICS',
         on_schema_change='append_new_columns',
         post_hook=[
           "CREATE INDEX IF NOT EXISTS idx_trips_brin_start ON {{ this }} USING BRIN (\"START_TS\")",

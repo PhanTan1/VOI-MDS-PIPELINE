@@ -3,7 +3,7 @@ version: 2
 sources:
   - name: raw_voi
     database: stage_micromobility # Matches PG_DATABASE
-    schema: PROD_MICROMOBILITY_RAW # Matches PG_SCHEMA_RAW
+    schema: MICROMOBILITY_RAW # Matches PG_SCHEMA_RAW
     tables:
       - name: VOI_VEHICLES_STATUS
         description: "Raw JSON data from VOI vehicles/status endpoint"

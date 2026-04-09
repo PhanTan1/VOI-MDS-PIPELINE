@@ -1,6 +1,5 @@
 import psycopg2
 import os
-import csv
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -32,5 +31,5 @@ def import_csv(file_path, target_table):
 
 if __name__ == "__main__":
     # Exemple d'usage : 
-    # import_csv('chemin/vers/ton/dump_voi.csv', 'PROD_MICROMOBILITY_RAW.VOI_TRIPS_HISTORIC')
+    # import_csv('chemin/vers/ton/dump_voi.csv', 'MICROMOBILITY_RAW.VOI_TRIPS_HISTORIC')
     print("Prêt pour l'import.")

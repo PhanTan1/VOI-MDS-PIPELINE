@@ -5,7 +5,7 @@
         materialized='incremental',
         unique_key='"UID"',
         alias='FCT_VEHICLES_STATUS',
-        schema='PROD_MICROMOBILITY_ANALYTICS',
+        schema='MICROMOBILITY_ANALYTICS',
         post_hook=[
           "CREATE INDEX IF NOT EXISTS idx_status_brin_ts ON {{ this }} USING BRIN (\"VALID_FROM_TS\")",
           "CREATE INDEX IF NOT EXISTS idx_status_bt_vehicle ON {{ this }} (\"VEHICLE_ID\")"

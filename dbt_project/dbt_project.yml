@@ -22,9 +22,9 @@ models:
     # This configuration applies to everything in models/staging/
     staging:
       +materialized: view
-      +schema: PROD_MICROMOBILITY_STAGING
+      +schema: MICROMOBILITY_STAGING
     
     # This configuration applies to everything in models/marts/
     marts:
       +materialized: table
-      +schema: PROD_MICROMOBILITY_ANALYTICS
+      +schema: MICROMOBILITY_ANALYTICS

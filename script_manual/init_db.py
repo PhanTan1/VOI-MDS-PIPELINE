@@ -90,7 +90,7 @@ def setup_infrastructure():
 
         # --- PHASE 1: Schema Creation ---
         print("Verifying schemas...")
-        schemas = ["PROD_MICROMOBILITY_RAW", "PROD_MICROMOBILITY_STAGING", "PROD_MICROMOBILITY_ANALYTICS"]
+        schemas = ["MICROMOBILITY_RAW", "MICROMOBILITY_STAGING", "MICROMOBILITY_ANALYTICS"]
         for schema in schemas:
             cur.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(schema)))
         print(f"Schemas verified: {', '.join(schemas)}")
@@ -106,7 +106,7 @@ def setup_infrastructure():
                     load_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             ''').format(
-                schema=sql.Identifier("PROD_MICROMOBILITY_RAW"),
+                schema=sql.Identifier("MICROMOBILITY_RAW"),
                 table=sql.Identifier(table)
             )
             cur.execute(query)
