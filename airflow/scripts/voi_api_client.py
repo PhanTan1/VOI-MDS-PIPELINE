@@ -103,7 +103,7 @@ class VoiApiClient:
             cur = conn.cursor()
 
             query = f'''
-                INSERT INTO "PROD_MICROMOBILITY_RAW"."{table_name}" 
+                INSERT INTO "MICROMOBILITY_RAW"."{table_name}" 
                 (content, filename, file_ts) 
                 VALUES (%s, %s, %s)
             '''
