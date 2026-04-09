@@ -1,7 +1,7 @@
 {{ config(materialized='view') }}
 
 WITH raw_vehicles AS (
-    SELECT content FROM {{ source('raw_voi', 'VOI_VEHICLES') }}
+    SELECT content FROM {{ source('raw_mds', 'VOI_VEHICLES') }}
 ),
 
 unnested_vehicles AS (

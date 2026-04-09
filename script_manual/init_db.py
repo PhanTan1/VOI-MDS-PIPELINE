@@ -68,7 +68,7 @@ def create_database():
         conn.close()
 
 def setup_infrastructure():
-    """Setup PostGIS, Schemas, and Tables."""
+    """Setup PostGIS, Schemas, and Unified Tables for all providers."""
     conn = get_connection(DB_NAME)
     conn.autocommit = True 
     cur = conn.cursor()
@@ -82,35 +82,40 @@ def setup_infrastructure():
                 cur.execute('CREATE EXTENSION IF NOT EXISTS postgis;')
                 print("PostGIS installed successfully.")
             except errors.InsufficientPrivilege:
-                print("Error: You do not have permission to install PostGIS. Please wait for your admin.")
-            except Exception as e:
-                print(f"Error enabling PostGIS: {e}")
+                print("Error: You do not have permission to install PostGIS.")
         else:
-            print("PostGIS extension already exists. Skipping.")
+            print("PostGIS extension already exists.")
 
         # --- PHASE 1: Schema Creation ---
-        print("Verifying schemas...")
         schemas = ["MICROMOBILITY_RAW", "MICROMOBILITY_STAGING", "MICROMOBILITY_ANALYTICS"]
         for schema in schemas:
             cur.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(schema)))
         print(f"Schemas verified: {', '.join(schemas)}")
 
-        # --- PHASE 2: Table Creation ---
-        voi_tables = ["VOI_TRIPS", "VOI_VEHICLES", "VOI_VEHICLES_STATUS", "VOI_EVENTS"]
-        for table in voi_tables:
-            query = sql.SQL('''
-                CREATE TABLE IF NOT EXISTS {schema}.{table} (
-                    content JSONB,
-                    filename VARCHAR(255),
-                    file_ts TIMESTAMP,
-                    load_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            ''').format(
-                schema=sql.Identifier("MICROMOBILITY_RAW"),
-                table=sql.Identifier(table)
-            )
-            cur.execute(query)
-            print(f"Table verified: {table}")
+        # --- PHASE 2: Unified Table Creation ---
+        providers = ["VOI", "DOTT", "BOLT"]
+        # Note: Dott doesn't typically use 'events', but creating the table ensures schema uniformity
+        endpoints = ["TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS"]
+        
+        for provider in providers:
+            for endpoint in endpoints:
+                table_name = f"{provider}_{endpoint}"
+                
+                # Added md5_hash column for deduplication
+                query = sql.SQL('''
+                    CREATE TABLE IF NOT EXISTS {schema}.{table} (
+                        content JSONB,
+                        filename VARCHAR(255),
+                        file_ts TIMESTAMP,
+                        md5_hash VARCHAR(32), 
+                        load_ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                ''').format(
+                    schema=sql.Identifier("MICROMOBILITY_RAW"),
+                    table=sql.Identifier(table_name)
+                )
+                cur.execute(query)
+                print(f"Table verified: {table_name}")
 
     except Exception as e:
         print(f"Error during infrastructure setup: {e}")

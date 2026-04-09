@@ -1,7 +1,7 @@
 {{ config(materialized='view') }}
 
 WITH raw_status AS (
-    SELECT content FROM {{ source('raw_voi', 'VOI_VEHICLES_STATUS') }}
+    SELECT content FROM {{ source('raw_mds', 'VOI_VEHICLES_STATUS') }}
 ),
 
 unnested_status AS (

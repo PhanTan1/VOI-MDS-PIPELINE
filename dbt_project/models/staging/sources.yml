@@ -1,12 +1,21 @@
 version: 2
 
 sources:
-  - name: raw_voi
-    database: stage_micromobility # Matches PG_DATABASE
-    schema: MICROMOBILITY_RAW # Matches PG_SCHEMA_RAW
+  - name: raw_mds
+    database: stage_micromobility
+    schema: MICROMOBILITY_RAW
     tables:
-      - name: VOI_VEHICLES_STATUS
-        description: "Raw JSON data from VOI vehicles/status endpoint"
+      # --- VOI TABLES ---
       - name: VOI_VEHICLES
       - name: VOI_TRIPS
+      - name: VOI_VEHICLES_STATUS
       - name: VOI_EVENTS
+
+      # --- DOTT TABLES ---
+      - name: DOTT_VEHICLES
+      - name: DOTT_TRIPS
+      - name: DOTT_VEHICLES_STATUS
+
+      # --- BOLT TABLES ---
+      - name: BOLT_VEHICLES
+      - name: BOLT_TRIPS
