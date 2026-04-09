@@ -1,0 +1,13 @@
+voi_mds:
+  outputs:
+    dev:
+      type: postgres
+      threads: 4
+      host: localhost
+      port: 5432
+      user: tan
+      password: password
+      dbname: stage_micromobility
+      schema: public
+  target: dev
+  
