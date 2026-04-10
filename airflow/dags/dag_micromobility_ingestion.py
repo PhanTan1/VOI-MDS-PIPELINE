@@ -9,11 +9,17 @@ from datetime import datetime, timedelta
 from cryptography.hazmat.primitives import serialization
 
 from airflow import DAG
-from airflow.models import Variable
+# --- FIX: New Airflow 3.0 SDK Way ---
+try:
+    from airflow.sdk import Variable
+except ImportError:
+    from airflow.models import Variable # Fallback for older environments
+# ------------------------------------
+from airflow.operators.empty import EmptyOperator
+from airflow.utils.trigger_rule import TriggerRule
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
-from airflow.operators.empty import EmptyOperator 
 from airflow.utils.trigger_rule import TriggerRule
 
 from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig
@@ -65,8 +71,17 @@ def get_dott_token():
 # --- 2. THE SMART INGESTOR ---
 
 def extract_and_load(provider, endpoint, table_name, **kwargs):
-    target_dt = datetime.utcnow()
-    target_time_str = (target_dt - timedelta(hours=1)).strftime("%Y-%m-%dT%H")
+    now = datetime.utcnow()
+    
+    # --- LOGIC: Handle Provider Delays ---
+    # Most trips endpoints need at least 2-4 hours to "bake" on the server
+    if endpoint == "trips":
+        delay_hours = 4 if provider == 'dott' else 2
+    else:
+        delay_hours = 1 # Status/Telemetry is usually ready faster
+        
+    target_dt = now - timedelta(hours=delay_hours)
+    target_time_str = target_dt.strftime("%Y-%m-%dT%H")
     
     params = {}
 
@@ -88,20 +103,24 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     elif provider == 'bolt':
         token = get_bolt_token()
         url = f"https://mds.bolt.eu/{endpoint}"
-        # UPGRADED TO MDS 2.0
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds+json;version=2.0"}
         
-        # Bolt's specific time parameters
         if endpoint == 'events/recent':
-            # Needs epoch milliseconds
-            start_dt = target_dt - timedelta(hours=2)
+            # Bolt telemetry is live, we pull a 2-hour window up to 'now'
+            start_dt = now - timedelta(hours=2)
             params['start_time'] = int(start_dt.timestamp() * 1000)
-            params['end_time'] = int(target_dt.timestamp() * 1000)
+            params['end_time'] = int(now.timestamp() * 1000)
         elif endpoint == 'trips':
             params["end_time"] = target_time_str
 
     print(f"Polling {provider} at {url} with params {params}...")
     response = requests.get(url, headers=headers, params=params)
+    
+    # Graceful handling for 404 (Data not ready yet)
+    if response.status_code == 404 and endpoint == 'trips':
+        print(f"⚠️ 404 Error: Trip data for {target_time_str} is not yet available on {provider}'s server. Skipping this run.")
+        return
+
     response.raise_for_status()
     data = response.json()
 
