@@ -1,12 +1,26 @@
 {{ config(materialized='view') }}
 
+WITH base_extraction AS (
+    SELECT 
+        CASE 
+            WHEN content ? 'data' AND (content->'data') ? 'events' THEN content->'data'->'events'
+            WHEN content ? 'events' THEN content->'events'
+            ELSE '[]'::jsonb
+        END AS events_array
+    FROM {{ source('raw_mds', 'BOLT_EVENTS') }}
+),
+
+unnested_events AS (
+    SELECT item
+    FROM base_extraction,
+    LATERAL jsonb_array_elements(events_array) AS item
+)
+
 SELECT
-    content->>'device_id' AS device_id,
-    content->>'vehicle_state' AS vehicle_state,
-    (content->'event_types')->>0 AS event_type,
-    (content->'location')->>'lat' AS lat,
-    (content->'location')->>'lng' AS lon,
-    -- Bolt timestamps are in milliseconds, so we convert them to standard timestamps
-    TO_TIMESTAMP(CAST(content->>'timestamp' AS BIGINT) / 1000.0) AS reported_at
--- Make sure the source name matches what you use for Voi/Dott (e.g., 'raw' or 'micromobility_raw')
-FROM {{ source('raw_mds', 'BOLT_EVENTS') }}
+    item->>'device_id' AS device_id,
+    item->>'vehicle_state' AS vehicle_state,
+    (item->'event_types')->>0 AS event_type,
+    (item->'location'->>'lat')::DOUBLE PRECISION AS lat,
+    (item->'location'->>'lng')::DOUBLE PRECISION AS lon,
+    TO_TIMESTAMP((item->>'timestamp')::BIGINT / 1000.0) AS reported_at
+FROM unnested_events

@@ -20,9 +20,10 @@ bolt_registry AS (
     SELECT * FROM {{ ref('stg_bolt_vehicles') }}
 ),
 
+-- 1. BOLT: Standardized to vehicle_id
 bolt_normalized AS (
     SELECT
-        t.device_id::TEXT AS vehicle_id, -- Renamed here
+        t.device_id::TEXT AS vehicle_id,
         COALESCE(r.vehicle_type, 'scooter')::TEXT AS vehicle_type,
         'Bolt'::TEXT AS provider_name,
         t.vehicle_state::TEXT AS vehicle_state,
@@ -37,9 +38,9 @@ bolt_normalized AS (
 ),
 
 combined_staging AS (
-    -- VOI
+    -- VOI: Check if your stg_voi_vehicles_status uses vehicle_short_id or vehicle_id
     SELECT 
-        vehicle_short_id::TEXT AS vehicle_id, -- Alias to new standard
+        vehicle_short_id::TEXT AS vehicle_id, 
         vehicle_type::TEXT, 'Voi'::TEXT AS provider_name, 
         vehicle_state::TEXT, event_type::TEXT, 
         lat::DOUBLE PRECISION, lon::DOUBLE PRECISION, 
@@ -48,9 +49,9 @@ combined_staging AS (
 
     UNION ALL
 
-    -- DOTT
+    -- DOTT: Updated to match the new Lateral staging output name
     SELECT 
-        vehicle_short_id::TEXT AS vehicle_id, -- Alias to new standard
+        vehicle_id::TEXT AS vehicle_id, 
         vehicle_type::TEXT, 'Dott'::TEXT AS provider_name, 
         vehicle_state::TEXT, event_type::TEXT, 
         lat::DOUBLE PRECISION, lon::DOUBLE PRECISION, 
@@ -66,8 +67,9 @@ combined_staging AS (
     FROM bolt_normalized
 )
 
+-- 2. Final Selection
 SELECT
-    -- Swapped vehicle_short_id for vehicle_id
+    -- Unique ID for incremental merges
     LOWER(vehicle_id) || '_' || provider_name || '_' || TO_CHAR(reported_at, 'YYYYMMDDHH24MISSMS') AS "UID",
     vehicle_id AS "VEHICLE_ID",
     vehicle_type AS "VEHICLE_TYPE",
@@ -78,11 +80,12 @@ SELECT
     lon AS "LON",
     trip_id AS "TRIP_ID",
     reported_at AS "VALID_FROM_TS",
-    -- Calculate window per vehicle AND provider
+    -- LEAD creates the time windows for analytics
     LEAD(reported_at) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) AS "VALID_TO_TS"
 FROM combined_staging
 WHERE vehicle_id IS NOT NULL
 
 {% if is_incremental() %}
+  -- Safe lookback for incremental runs
   AND reported_at >= (SELECT MAX("VALID_FROM_TS") - INTERVAL '3 days' FROM {{ this }})
 {% endif %}
