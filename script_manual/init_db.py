@@ -92,17 +92,17 @@ def setup_infrastructure():
             cur.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(schema)))
         print(f"Schemas verified: {', '.join(schemas)}")
 
-        # --- PHASE 2: Unified Table Creation ---
+        # --- PHASE 2: Unified Table Creation & Upgrades ---
         providers = ["VOI", "DOTT", "BOLT"]
-        # Note: Dott doesn't typically use 'events', but creating the table ensures schema uniformity
+        # Included 'EVENTS' specifically to catch the new Bolt MDS 2.0 data
         endpoints = ["TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS"]
         
         for provider in providers:
             for endpoint in endpoints:
                 table_name = f"{provider}_{endpoint}"
                 
-                # Added md5_hash column for deduplication
-                query = sql.SQL('''
+                # 1. Create table if it is brand new
+                create_query = sql.SQL('''
                     CREATE TABLE IF NOT EXISTS {schema}.{table} (
                         content JSONB,
                         filename VARCHAR(255),
@@ -114,8 +114,19 @@ def setup_infrastructure():
                     schema=sql.Identifier("MICROMOBILITY_RAW"),
                     table=sql.Identifier(table_name)
                 )
-                cur.execute(query)
-                print(f"Table verified: {table_name}")
+                cur.execute(create_query)
+
+                # 2. Upgrade existing tables (The Fix for your Work Computer)
+                alter_query = sql.SQL('''
+                    ALTER TABLE {schema}.{table}
+                    ADD COLUMN IF NOT EXISTS md5_hash VARCHAR(32);
+                ''').format(
+                    schema=sql.Identifier("MICROMOBILITY_RAW"),
+                    table=sql.Identifier(table_name)
+                )
+                cur.execute(alter_query)
+                
+                print(f"Table verified & updated: {table_name}")
 
     except Exception as e:
         print(f"Error during infrastructure setup: {e}")

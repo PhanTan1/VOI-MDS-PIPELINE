@@ -13,12 +13,15 @@ from airflow.models import Variable
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
+from airflow.operators.empty import EmptyOperator 
+from airflow.utils.trigger_rule import TriggerRule
 
 from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig
 from cosmos.profiles import PostgresUserPasswordProfileMapping
 from cosmos.constants import TestBehavior
 
 # --- 1. AUTHENTICATION HELPERS ---
+# (Keep your existing get_voi_token, get_bolt_token, get_dott_token functions exactly as they are)
 
 def get_voi_token():
     res = requests.post(
@@ -62,48 +65,47 @@ def get_dott_token():
 # --- 2. THE SMART INGESTOR ---
 
 def extract_and_load(provider, endpoint, table_name, **kwargs):
-    # 1. Standardized Hour Window (1 hour ago)
-    # Format: YYYY-MM-DDTHH (e.g., 2026-04-09T21)
-    target_dt = datetime.utcnow() - timedelta(hours=1)
-    target_time = target_dt.strftime("%Y-%m-%dT%H")
+    target_dt = datetime.utcnow()
+    target_time_str = (target_dt - timedelta(hours=1)).strftime("%Y-%m-%dT%H")
     
     params = {}
-    if endpoint == "trips":
-        # ALL MDS Provider implementations (Voi, Dott, Bolt) 
-        # use end_time to filter by the hour the trip was completed.
-        params["end_time"] = target_time
 
     # 2. Provider Setup
     if provider == 'voi':
         token = get_voi_token()
         url = f"{Variable.get('VOI_MDS_URL')}/{Variable.get('VOI_ZONE_ID')}/{endpoint}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.mds+json;version=2.0"
-        }
-        
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds+json;version=2.0"}
+        if endpoint == "trips":
+            params["end_time"] = target_time_str
+            
     elif provider == 'dott':
         token = get_dott_token()
         url = f"https://mds.api.ridedott.com/{Variable.get('DOTT_REGION', 'brussels')}/{endpoint}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.mds.provider+json;version=2.0"
-        }
-        
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds.provider+json;version=2.0"}
+        if endpoint == "trips":
+            params["end_time"] = target_time_str
+            
     elif provider == 'bolt':
         token = get_bolt_token()
         url = f"https://mds.bolt.eu/{endpoint}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.mds+json;version=1.2"
-        }
+        # UPGRADED TO MDS 2.0
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds+json;version=2.0"}
+        
+        # Bolt's specific time parameters
+        if endpoint == 'events/recent':
+            # Needs epoch milliseconds
+            start_dt = target_dt - timedelta(hours=2)
+            params['start_time'] = int(start_dt.timestamp() * 1000)
+            params['end_time'] = int(target_dt.timestamp() * 1000)
+        elif endpoint == 'trips':
+            params["end_time"] = target_time_str
 
     print(f"Polling {provider} at {url} with params {params}...")
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
     data = response.json()
 
-    # 3. MD5 Deduplication
+    # 3. MD5 Deduplication (Hashing the entire payload)
     content_str = json.dumps(data, sort_keys=True)
     current_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
     pg_hook = PostgresHook(postgres_conn_id='postgres_raw')
@@ -116,11 +118,10 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
             print(f"Deduplication: No changes for {provider} {endpoint}. Skipping.")
             return
     except Exception:
-        pass # Handle tables waiting for ALTER TABLE
+        pass 
 
     # 4. Save to Bronze
-    # Use target_time in filename so you can easily see which hour the data belongs to
-    filename = f"{provider}_{endpoint.replace('/', '_')}_{target_time}.json"
+    filename = f"{provider}_{endpoint.replace('/', '_')}_{target_time_str}.json"
     pg_hook.run(
         f'INSERT INTO "MICROMOBILITY_RAW"."{table_name}" (content, filename, file_ts, md5_hash) VALUES (%s, %s, %s, %s)',
         parameters=(content_str, filename, datetime.now(), current_hash)
@@ -135,10 +136,11 @@ with DAG(
     catchup=False
 ) as dag:
 
+    # UPDATED: Bolt now uses 'events/recent' instead of 'vehicles'
     ENDPOINTS = {
         'voi': {'vehicles': 'VOI_VEHICLES', 'trips': 'VOI_TRIPS', 'vehicles/status': 'VOI_VEHICLES_STATUS'},
         'dott': {'vehicles': 'DOTT_VEHICLES', 'trips': 'DOTT_TRIPS', 'vehicles/status': 'DOTT_VEHICLES_STATUS'},
-        'bolt': {'vehicles': 'BOLT_VEHICLES', 'trips': 'BOLT_TRIPS'} 
+        'bolt': {'events/recent': 'BOLT_EVENTS', 'trips': 'BOLT_TRIPS'} 
     }
 
     with TaskGroup("bronze_layer") as bronze_group:
@@ -150,14 +152,26 @@ with DAG(
                     op_kwargs={'provider': provider, 'endpoint': ep, 'table_name': table}
                 )
 
+    extraction_bridge = EmptyOperator(
+        task_id="extraction_bridge",
+        trigger_rule=TriggerRule.ALL_DONE
+    )
+
+    # 2. THE DBT GROUP: Remove the 'trigger_rule' from here.
     dbt_group = DbtTaskGroup(
         group_id="transformation",
         project_config=ProjectConfig("/opt/airflow/voi_dbt"),
         profile_config=ProfileConfig(
-            profile_name="voi_mds", target_name="prod",
-            profile_mapping=PostgresUserPasswordProfileMapping(conn_id="postgres_raw", profile_args={"schema": "public"})
+            profile_name="voi_mds", 
+            target_name="prod",
+            profile_mapping=PostgresUserPasswordProfileMapping(
+                conn_id="postgres_raw", 
+                profile_args={"schema": "public"}
+            )
         ),
         render_config=RenderConfig(test_behavior=TestBehavior.AFTER_ALL)
     )
 
-    bronze_group >> dbt_group
+    # 3. THE NEW FLOW
+    # Extractions >> Bridge >> dbt
+    bronze_group >> extraction_bridge >> dbt_group
