@@ -2,21 +2,18 @@ version: 2
 
 models:
   - name: fct_vehicles_status
-    description: "Real-time telemetry for Brussels mobility fleet"
+    description: "Real-time telemetry for all Brussels mobility fleets"
     columns:
-      - name: '"UID"' # The primary key we built
+      - name: '"UID"'
         tests:
           - unique
           - not_null
       - name: '"VEHICLE_ID"'
         tests:
           - not_null
-          - relationships:
-              to: ref('stg_voi_vehicles')
-              field: vehicle_id # Verify this is lowercase in stg_voi_vehicles.sql
 
-  - name: fct_trips_vianova
-    description: "Historical trip data with precise PostGIS distance and routes"
+  - name: fct_all_trips  # Changed from fct_trips_vianova
+    description: "Unified historical trip data across all providers"
     columns:
       - name: '"TRIP_ID"'
         tests:
@@ -25,9 +22,6 @@ models:
       - name: '"VEHICLE_ID"'
         tests:
           - not_null
-          - relationships:
-              to: ref('stg_voi_vehicles')
-              field: vehicle_id
       - name: '"START_TS"'
         tests:
           - not_null

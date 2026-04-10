@@ -1,33 +1,36 @@
 {{ config(materialized='view') }}
 
 WITH raw_trips AS (
-    SELECT jsonb_array_elements(content->'trips') AS item 
+    -- Safely unnest the JSON array of trips from the raw Bolt payload
+    SELECT jsonb_array_elements(
+        CASE 
+            WHEN content ? 'data' THEN content->'data'->'trips'
+            WHEN content ? 'trips' THEN content->'trips'
+            ELSE '[]'::jsonb
+        END
+    ) AS item
     FROM {{ source('raw_mds', 'BOLT_TRIPS') }}
 )
 
 SELECT DISTINCT
     item->>'trip_id' AS trip_id,
-    -- Bolt often includes vehicle_id directly in the trip payload
-    COALESCE(item->>'vehicle_id', item->>'device_id') AS vehicle_short_id,
-    item->>'vehicle_type' AS vehicle_type,
-    'Bolt' AS provider_name,
+    item->>'device_id' AS vehicle_id, -- Standardized column name
     
-    TO_TIMESTAMP((item->>'start_time')::bigint / 1000.0) AS start_ts,
-    TO_TIMESTAMP((item->>'end_time')::bigint / 1000.0) AS end_ts,
-    (item->>'duration')::numeric AS trip_duration,
-    (item->>'distance')::float AS trip_distance_meters,
+    -- Cast metrics to standard numeric types
+    (item->>'duration')::INTEGER AS duration,
+    (item->>'distance')::DOUBLE PRECISION AS distance,
     
-    (item->'start_location'->>'lat')::float AS start_lat,
-    (item->'start_location'->>'lng')::float AS start_lon,
-    (item->'end_location'->>'lat')::float AS end_lat,
-    (item->'end_location'->>'lng')::float AS end_lon,
-
-    COALESCE(
-        ST_GeomFromGeoJSON(item->'route'),
-        ST_MakeLine(
-            ST_SetSRID(ST_MakePoint((item->'start_location'->>'lng')::float, (item->'start_location'->>'lat')::float), 4326),
-            ST_SetSRID(ST_MakePoint((item->'end_location'->>'lng')::float, (item->'end_location'->>'lat')::float), 4326)
-        )
-    )::geometry(LineString, 4326) AS route_geom
+    -- Bolt uses timestamps in milliseconds
+    TO_TIMESTAMP((item->>'start_time')::BIGINT / 1000.0) AS started_at,
+    TO_TIMESTAMP((item->>'end_time')::BIGINT / 1000.0) AS ended_at,
+    
+    -- Extract Geo coordinates
+    (item->'start_location'->>'lat')::DOUBLE PRECISION AS start_lat,
+    (item->'start_location'->>'lng')::DOUBLE PRECISION AS start_lon,
+    (item->'end_location'->>'lat')::DOUBLE PRECISION AS end_lat,
+    (item->'end_location'->>'lng')::DOUBLE PRECISION AS end_lon,
+    
+    -- Extract GeoJSON route
+    item->>'route' AS route_geom
 
 FROM raw_trips
