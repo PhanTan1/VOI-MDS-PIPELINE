@@ -12,20 +12,57 @@
     )
 }}
 
-WITH combined_staging AS (
+WITH bolt_telemetry AS (
+    SELECT * FROM {{ ref('stg_bolt_events') }}
+),
+
+bolt_registry AS (
+    SELECT * FROM {{ ref('stg_bolt_vehicles') }}
+),
+
+-- Join Bolt and FORCE types to match Voi/Dott
+bolt_normalized AS (
+    SELECT
+        t.device_id::TEXT AS vehicle_short_id,
+        COALESCE(r.vehicle_type, 'scooter')::TEXT AS vehicle_type,
+        'Bolt'::TEXT AS provider_name,
+        t.vehicle_state::TEXT AS vehicle_state,
+        t.event_type::TEXT AS event_type,
+        t.lat::DOUBLE PRECISION AS lat,
+        t.lon::DOUBLE PRECISION AS lon,
+        NULL::TEXT AS trip_id, 
+        t.reported_at::TIMESTAMP AS reported_at
+    FROM bolt_telemetry t
+    LEFT JOIN bolt_registry r 
+        ON t.device_id = r.device_id
+),
+
+combined_staging AS (
     -- VOI
     SELECT 
-        vehicle_short_id, vehicle_type, 'Voi' AS provider_name, 
-        vehicle_state, event_type, lat, lon, trip_id, reported_at
+        vehicle_short_id::TEXT, vehicle_type::TEXT, 'Voi'::TEXT AS provider_name, 
+        vehicle_state::TEXT, event_type::TEXT, 
+        lat::DOUBLE PRECISION, lon::DOUBLE PRECISION, 
+        trip_id::TEXT, reported_at::TIMESTAMP
     FROM {{ ref('stg_voi_vehicles_status') }}
 
     UNION ALL
 
     -- DOTT
     SELECT 
-        vehicle_short_id, vehicle_type, 'Dott' AS provider_name, 
-        vehicle_state, event_type, lat, lon, trip_id, reported_at
+        vehicle_short_id::TEXT, vehicle_type::TEXT, 'Dott'::TEXT AS provider_name, 
+        vehicle_state::TEXT, event_type::TEXT, 
+        lat::DOUBLE PRECISION, lon::DOUBLE PRECISION, 
+        trip_id::TEXT, reported_at::TIMESTAMP
     FROM {{ ref('stg_dott_vehicles_status') }}
+
+    UNION ALL
+
+    -- BOLT
+    SELECT 
+        vehicle_short_id, vehicle_type, provider_name, 
+        vehicle_state, event_type, lat, lon, trip_id, reported_at
+    FROM bolt_normalized
 )
 
 SELECT
@@ -45,6 +82,5 @@ FROM combined_staging
 WHERE vehicle_short_id IS NOT NULL
 
 {% if is_incremental() %}
-  -- Use the 3-day lookback logic you established
   AND reported_at >= (SELECT MAX("VALID_FROM_TS") - INTERVAL '3 days' FROM {{ this }})
 {% endif %}

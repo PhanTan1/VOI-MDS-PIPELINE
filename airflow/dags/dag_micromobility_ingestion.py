@@ -159,7 +159,7 @@ with DAG(
     ENDPOINTS = {
         'voi': {'vehicles': 'VOI_VEHICLES', 'trips': 'VOI_TRIPS', 'vehicles/status': 'VOI_VEHICLES_STATUS'},
         'dott': {'vehicles': 'DOTT_VEHICLES', 'trips': 'DOTT_TRIPS', 'vehicles/status': 'DOTT_VEHICLES_STATUS'},
-        'bolt': {'events/recent': 'BOLT_EVENTS', 'trips': 'BOLT_TRIPS'} 
+        'bolt': {'vehicles': 'BOLT_VEHICLES','events/recent': 'BOLT_EVENTS', 'trips': 'BOLT_TRIPS' }
     }
 
     with TaskGroup("bronze_layer") as bronze_group:

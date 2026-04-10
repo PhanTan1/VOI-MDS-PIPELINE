@@ -18,4 +18,5 @@ sources:
 
       # --- BOLT TABLES ---
       - name: BOLT_VEHICLES
+      - name: BOLT_EVENTS
       - name: BOLT_TRIPS

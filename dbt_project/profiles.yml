@@ -2,10 +2,11 @@ voi_mds:
   outputs:
     dev:
       type: postgres
-      host: {{ env_var('DB_HOST') }}
-      user: {{ env_var('DB_USER') }}
-      password: {{ env_var('DB_PASSWORD') }}
-      port: 5432
-      dbname: stage_micromobility
+      host: "{{ env_var('PG_HOST') }}"
+      user: "{{ env_var('PG_USER') }}"
+      password: "{{ env_var('PG_PASS') }}"
+      dbname: "{{ env_var('PG_DATABASE') }}"
       schema: public
+      port: 5432  # No quotes, no braces, just the number
+      threads: 4  # No quotes, just the number
   target: dev
