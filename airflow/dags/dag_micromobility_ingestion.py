@@ -5,29 +5,31 @@ import time
 import uuid
 import jwt
 import re
+import urllib3 # Added for warning suppression
 from datetime import datetime, timedelta
 from cryptography.hazmat.primitives import serialization
 
 from airflow import DAG
-# --- FIX: New Airflow 3.0 SDK Way ---
+# --- Future-proof for Airflow 3.0 ---
 try:
-    from airflow.sdk import Variable
+    from airflow.sdk import Variable, TaskGroup
 except ImportError:
-    from airflow.models import Variable # Fallback for older environments
-# ------------------------------------
-from airflow.operators.empty import EmptyOperator
-from airflow.utils.trigger_rule import TriggerRule
+    from airflow.models import Variable
+    from airflow.utils.task_group import TaskGroup
+
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.utils.task_group import TaskGroup
-from airflow.utils.trigger_rule import TriggerRule
+from airflow.task.trigger_rule import TriggerRule
 
 from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig
 from cosmos.profiles import PostgresUserPasswordProfileMapping
 from cosmos.constants import TestBehavior
 
+# Disable the noisy warnings about insecure requests from verify=False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # --- 1. AUTHENTICATION HELPERS ---
-# (Keep your existing get_voi_token, get_bolt_token, get_dott_token functions exactly as they are)
 
 def get_voi_token():
     res = requests.post(
@@ -39,16 +41,37 @@ def get_voi_token():
     return res.json().get("access_token")
 
 def get_bolt_token():
+    # Safely get the URL without relying on Airflow's keyword arguments
+    try:
+        url = Variable.get("BOLT_AUTH_URL")
+    except Exception:
+        url = "https://mds.bolt.eu/auth"
+    
+    # EXACT headers required by Bolt to avoid the 406 error
+    headers = {
+        "Content-Type": "application/json", 
+        "Accept": "application/vnd.mds+json;version=2.0"
+    }
+    
+    # EXACT payload keys from your working version
+    payload = {
+        "user_name": Variable.get("BOLT_USER"),
+        "user_pass": Variable.get("BOLT_PASSWORD") 
+    }
+    
+    # Bypass corporate SSL with verify=False
     res = requests.post(
-        Variable.get("BOLT_AUTH_URL"),
-        headers={"Content-Type": "application/json", "Accept": "application/vnd.mds+json;version=2.0"},
-        json={
-            "user_name": Variable.get("BOLT_USER"),
-            "user_pass": Variable.get("BOLT_PASSWORD")
-        }
+        url,
+        headers=headers,
+        json=payload,
+        verify=False,
+        timeout=20
     )
+    
     res.raise_for_status()
     data = res.json()
+    
+    # Robust token extraction
     return data.get("access_token") or data.get("token") or data.get("data", {}).get("token")
 
 def get_dott_token():
@@ -73,19 +96,18 @@ def get_dott_token():
 def extract_and_load(provider, endpoint, table_name, **kwargs):
     now = datetime.utcnow()
     
-    # --- LOGIC: Handle Provider Delays ---
-    # Most trips endpoints need at least 2-4 hours to "bake" on the server
+    # Handle Provider Delays
     if endpoint == "trips":
         delay_hours = 4 if provider == 'dott' else 2
     else:
-        delay_hours = 1 # Status/Telemetry is usually ready faster
+        delay_hours = 1 
         
     target_dt = now - timedelta(hours=delay_hours)
     target_time_str = target_dt.strftime("%Y-%m-%dT%H")
     
     params = {}
 
-    # 2. Provider Setup
+    # Provider Setup
     if provider == 'voi':
         token = get_voi_token()
         url = f"{Variable.get('VOI_MDS_URL')}/{Variable.get('VOI_ZONE_ID')}/{endpoint}"
@@ -106,7 +128,6 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds+json;version=2.0"}
         
         if endpoint == 'events/recent':
-            # Bolt telemetry is live, we pull a 2-hour window up to 'now'
             start_dt = now - timedelta(hours=2)
             params['start_time'] = int(start_dt.timestamp() * 1000)
             params['end_time'] = int(now.timestamp() * 1000)
@@ -114,7 +135,9 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
             params["end_time"] = target_time_str
 
     print(f"Polling {provider} at {url} with params {params}...")
-    response = requests.get(url, headers=headers, params=params)
+    
+    # Bypass corporate SSL inspection for all providers
+    response = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
     
     # Graceful handling for 404 (Data not ready yet)
     if response.status_code == 404 and endpoint == 'trips':
@@ -124,7 +147,7 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     response.raise_for_status()
     data = response.json()
 
-    # 3. MD5 Deduplication (Hashing the entire payload)
+    # MD5 Deduplication
     content_str = json.dumps(data, sort_keys=True)
     current_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
     pg_hook = PostgresHook(postgres_conn_id='postgres_raw')
@@ -139,7 +162,7 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     except Exception:
         pass 
 
-    # 4. Save to Bronze
+    # Save to Bronze
     filename = f"{provider}_{endpoint.replace('/', '_')}_{target_time_str}.json"
     pg_hook.run(
         f'INSERT INTO "MICROMOBILITY_RAW"."{table_name}" (content, filename, file_ts, md5_hash) VALUES (%s, %s, %s, %s)',
@@ -155,7 +178,6 @@ with DAG(
     catchup=False
 ) as dag:
 
-    # UPDATED: Bolt now uses 'events/recent' instead of 'vehicles'
     ENDPOINTS = {
         'voi': {'vehicles': 'VOI_VEHICLES', 'trips': 'VOI_TRIPS', 'vehicles/status': 'VOI_VEHICLES_STATUS'},
         'dott': {'vehicles': 'DOTT_VEHICLES', 'trips': 'DOTT_TRIPS', 'vehicles/status': 'DOTT_VEHICLES_STATUS'},
@@ -176,7 +198,6 @@ with DAG(
         trigger_rule=TriggerRule.ALL_DONE
     )
 
-    # 2. THE DBT GROUP: Remove the 'trigger_rule' from here.
     dbt_group = DbtTaskGroup(
         group_id="transformation",
         project_config=ProjectConfig("/opt/airflow/voi_dbt"),
@@ -185,12 +206,12 @@ with DAG(
             target_name="prod",
             profile_mapping=PostgresUserPasswordProfileMapping(
                 conn_id="postgres_raw", 
-                profile_args={"schema": "public"}
+                # FIX: Set this to your actual dbt schema to prevent "ghost backup" relation errors
+                profile_args={"schema": "MICROMOBILITY_STAGING"} 
             )
         ),
         render_config=RenderConfig(test_behavior=TestBehavior.AFTER_ALL)
     )
 
-    # 3. THE NEW FLOW
     # Extractions >> Bridge >> dbt
     bronze_group >> extraction_bridge >> dbt_group
