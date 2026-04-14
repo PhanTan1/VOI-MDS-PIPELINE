@@ -75,7 +75,7 @@ def get_dott_token():
 def extract_and_load(provider, endpoint, table_name, **kwargs):
     now = datetime.utcnow()
     
-    # Custom delay logic for trips vs real-time endpoints
+    # Custom delay logic for hourly trips vs real-time endpoints
     if "trips" in endpoint:
         delay_hours = 4 if provider == 'dott' else 2
     else:
@@ -84,16 +84,22 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     target_dt = now - timedelta(hours=delay_hours)
     target_time_str = target_dt.strftime("%Y-%m-%dT%H")
     
-    # --- Universal Parameter Routing based on Postman Specs ---
+    # --- Universal Parameter Routing ---
     params = {}
-    if endpoint in ["trips", "trips/brussels"]:
+    
+    # FIX: Poppy-Specific Trip Parameters (Requires YYYY-MM-DD and both start/end)
+    if provider == 'poppy' and endpoint == 'trips/brussels':
+        params["start_time"] = (now - timedelta(days=2)).strftime("%Y-%m-%d")
+        params["end_time"] = now.strftime("%Y-%m-%d")
+        
+    # Standard MDS 2.0 Trip Parameters (Voi, Dott, Bolt)
+    elif endpoint in ["trips", "trips/brussels"]:
         params["end_time"] = target_time_str
+        
+    # Standard Event/Telemetry Parameters
     elif endpoint == "status_changes":
-        params["event_time"] = target_time_str # MDS 1.2 format for Bolt/Dott
-    elif endpoint == "telemetry":
-        params["telemetry_time"] = target_time_str # Specific to Voi
+        params["event_time"] = target_time_str
     elif "events" in endpoint: 
-        # Handles Dott ('events') and Bolt/Voi ('events/recent')
         start_dt = now - timedelta(hours=2)
         params['start_time'] = int(start_dt.timestamp() * 1000)
         params['end_time'] = int(now.timestamp() * 1000)
@@ -107,7 +113,6 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     elif provider == 'dott':
         token = get_dott_token()
         url = f"https://mds.api.ridedott.com/{Variable.get('DOTT_REGION', 'brussels')}/{endpoint}"
-        # Dott status_changes uses MDS 1.2, everything else is 2.0
         accept_version = "1.2" if endpoint == "status_changes" else "2.0"
         headers = {"Authorization": f"Bearer {token}", "Accept": f"application/vnd.mds.provider+json;version={accept_version}"}
         
@@ -118,7 +123,6 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
         headers = {"Authorization": f"Bearer {token}", "Accept": f"application/vnd.mds+json;version={accept_version}"}
         
     elif provider == 'poppy':
-        # Poppy uses a static API key and GBFS-style endpoints alongside MDS
         api_key = Variable.get("POPPY_API_KEY") 
         url = f"https://poppy.red/mds/{endpoint}"
         headers = {"external-api-key": api_key, "Accept": "application/vnd.mds+json;version=2.0"}
@@ -126,8 +130,9 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     # Execute Request
     response = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
     
-    # 404 Graceful Exit (Data not ready)
-    if response.status_code == 404 and "trips" in endpoint: 
+    # Graceful Exit for 404 (Data not ready) or 501 (Not Implemented)
+    if response.status_code in [404, 501]: 
+        print(f"Skipping {provider} {endpoint}: API gracefully returned {response.status_code}")
         return
         
     response.raise_for_status()
@@ -173,14 +178,14 @@ with DAG(
         )
     )
 
-    # 3.2 Bronze Layer: Expanded Dictionary mapping to the Postman specs
+    # 3.2 Bronze Layer with Sub-Groups
     ENDPOINTS = {
         'voi': {
             'vehicles': 'VOI_VEHICLES', 
             'trips': 'VOI_TRIPS', 
             'vehicles/status': 'VOI_VEHICLES_STATUS',
-            'events/recent': 'VOI_EVENTS',
-            'telemetry': 'VOI_TELEMETRY'
+            'events/recent': 'VOI_EVENTS'
+            # Removed telemetry to prevent 501 errors
         },
         'dott': {
             'vehicles': 'DOTT_VEHICLES', 
@@ -207,12 +212,15 @@ with DAG(
 
     with TaskGroup("bronze_layer") as bronze_group:
         for provider, tasks in ENDPOINTS.items():
-            for ep, table in tasks.items():
-                PythonOperator(
-                    task_id=f'fetch_{provider}_{ep.replace("/", "_")}',
-                    python_callable=extract_and_load,
-                    op_kwargs={'provider': provider, 'endpoint': ep, 'table_name': table}
-                )
+            # FIX: Nested TaskGroup for better Airflow UI visibility
+            with TaskGroup(f"ingest_{provider}") as provider_group:
+                for ep, table in tasks.items():
+                    PythonOperator(
+                        # Shortened the task_id slightly since it's now grouped
+                        task_id=f'fetch_{ep.replace("/", "_")}',
+                        python_callable=extract_and_load,
+                        op_kwargs={'provider': provider, 'endpoint': ep, 'table_name': table}
+                    )
 
     # 3.3 Extraction Bridge
     extraction_bridge = EmptyOperator(
@@ -228,7 +236,6 @@ with DAG(
             project_config=project_cfg,
             profile_config=profile_cfg,
             render_config=RenderConfig(
-                # ADDED THE ASTERISK (*): This fixes the 0 tasks bug
                 select=[f"path:models/staging/stg_{provider}*"], 
                 test_behavior=TestBehavior.AFTER_EACH
             )
