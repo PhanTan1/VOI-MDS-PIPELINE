@@ -74,44 +74,78 @@ def get_dott_token():
 
 def extract_and_load(provider, endpoint, table_name, **kwargs):
     now = datetime.utcnow()
-    delay_hours = 4 if (endpoint == "trips" and provider == 'dott') else (2 if endpoint == "trips" else 1)
+    
+    # Custom delay logic for trips vs real-time endpoints
+    if "trips" in endpoint:
+        delay_hours = 4 if provider == 'dott' else 2
+    else:
+        delay_hours = 1 
+        
     target_dt = now - timedelta(hours=delay_hours)
     target_time_str = target_dt.strftime("%Y-%m-%dT%H")
+    
+    # --- Universal Parameter Routing based on Postman Specs ---
     params = {}
+    if endpoint in ["trips", "trips/brussels"]:
+        params["end_time"] = target_time_str
+    elif endpoint == "status_changes":
+        params["event_time"] = target_time_str # MDS 1.2 format for Bolt/Dott
+    elif endpoint == "telemetry":
+        params["telemetry_time"] = target_time_str # Specific to Voi
+    elif "events" in endpoint: 
+        # Handles Dott ('events') and Bolt/Voi ('events/recent')
+        start_dt = now - timedelta(hours=2)
+        params['start_time'] = int(start_dt.timestamp() * 1000)
+        params['end_time'] = int(now.timestamp() * 1000)
 
+    # --- Provider API Routing ---
     if provider == 'voi':
         token = get_voi_token()
         url = f"{Variable.get('VOI_MDS_URL')}/{Variable.get('VOI_ZONE_ID')}/{endpoint}"
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds+json;version=2.0"}
-        if endpoint == "trips": params["end_time"] = target_time_str
+        
     elif provider == 'dott':
         token = get_dott_token()
         url = f"https://mds.api.ridedott.com/{Variable.get('DOTT_REGION', 'brussels')}/{endpoint}"
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds.provider+json;version=2.0"}
-        if endpoint == "trips": params["end_time"] = target_time_str
+        # Dott status_changes uses MDS 1.2, everything else is 2.0
+        accept_version = "1.2" if endpoint == "status_changes" else "2.0"
+        headers = {"Authorization": f"Bearer {token}", "Accept": f"application/vnd.mds.provider+json;version={accept_version}"}
+        
     elif provider == 'bolt':
         token = get_bolt_token()
         url = f"https://mds.bolt.eu/{endpoint}"
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.mds+json;version=2.0"}
-        if endpoint == 'events/recent':
-            params['start_time'] = int((now - timedelta(hours=2)).timestamp() * 1000)
-            params['end_time'] = int(now.timestamp() * 1000)
-        elif endpoint == 'trips': params["end_time"] = target_time_str
+        accept_version = "1.2" if endpoint == "status_changes" else "2.0"
+        headers = {"Authorization": f"Bearer {token}", "Accept": f"application/vnd.mds+json;version={accept_version}"}
+        
+    elif provider == 'poppy':
+        # Poppy uses a static API key and GBFS-style endpoints alongside MDS
+        api_key = Variable.get("POPPY_API_KEY") 
+        url = f"https://poppy.red/mds/{endpoint}"
+        headers = {"external-api-key": api_key, "Accept": "application/vnd.mds+json;version=2.0"}
 
+    # Execute Request
     response = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
-    if response.status_code == 404 and endpoint == 'trips': return
+    
+    # 404 Graceful Exit (Data not ready)
+    if response.status_code == 404 and "trips" in endpoint: 
+        return
+        
     response.raise_for_status()
     data = response.json()
 
+    # MD5 Deduplication
     content_str = json.dumps(data, sort_keys=True)
     current_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
     pg_hook = PostgresHook(postgres_conn_id='postgres_raw')
     
     try:
         last_hash_record = pg_hook.get_first(f'SELECT md5_hash FROM "MICROMOBILITY_RAW"."{table_name}" ORDER BY file_ts DESC LIMIT 1')
-        if last_hash_record and last_hash_record[0] == current_hash: return
-    except Exception: pass 
+        if last_hash_record and last_hash_record[0] == current_hash: 
+            return # Skip insertion if payload hasn't changed
+    except Exception: 
+        pass 
 
+    # Load to Postgres
     pg_hook.run(
         f'INSERT INTO "MICROMOBILITY_RAW"."{table_name}" (content, filename, file_ts, md5_hash) VALUES (%s, %s, %s, %s)',
         parameters=(content_str, f"{provider}_{endpoint.replace('/', '_')}_{target_time_str}.json", datetime.now(), current_hash)
@@ -119,7 +153,7 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
 
 # --- 3. DAG STRUCTURE ---
 
-PROVIDERS = ['voi', 'dott', 'bolt']
+PROVIDERS = ['voi', 'dott', 'bolt', 'poppy']
 
 with DAG(
     'micromobility_unified_ingestion',
@@ -139,11 +173,36 @@ with DAG(
         )
     )
 
-    # 3.2 Bronze Layer
+    # 3.2 Bronze Layer: Expanded Dictionary mapping to the Postman specs
     ENDPOINTS = {
-        'voi': {'vehicles': 'VOI_VEHICLES', 'trips': 'VOI_TRIPS', 'vehicles/status': 'VOI_VEHICLES_STATUS'},
-        'dott': {'vehicles': 'DOTT_VEHICLES', 'trips': 'DOTT_TRIPS', 'vehicles/status': 'DOTT_VEHICLES_STATUS'},
-        'bolt': {'vehicles': 'BOLT_VEHICLES', 'events/recent': 'BOLT_EVENTS', 'trips': 'BOLT_TRIPS'}
+        'voi': {
+            'vehicles': 'VOI_VEHICLES', 
+            'trips': 'VOI_TRIPS', 
+            'vehicles/status': 'VOI_VEHICLES_STATUS',
+            'events/recent': 'VOI_EVENTS',
+            'telemetry': 'VOI_TELEMETRY'
+        },
+        'dott': {
+            'vehicles': 'DOTT_VEHICLES', 
+            'trips': 'DOTT_TRIPS', 
+            'vehicles/status': 'DOTT_VEHICLES_STATUS',
+            'events': 'DOTT_EVENTS',
+            'status_changes': 'DOTT_STATUS_CHANGES'
+        },
+        'bolt': {
+            'vehicles': 'BOLT_VEHICLES', 
+            'trips': 'BOLT_TRIPS',
+            'events/recent': 'BOLT_EVENTS', 
+            'status_changes': 'BOLT_STATUS_CHANGES'
+        },
+        'poppy': {
+            'trips/brussels': 'POPPY_TRIPS',
+            'free_bike_status': 'POPPY_FREE_BIKE_STATUS',
+            'vehicle_types': 'POPPY_VEHICLE_TYPES',
+            'geofencing_zones': 'POPPY_GEOFENCING_ZONES',
+            'system_information': 'POPPY_SYSTEM_INFORMATION',
+            'system_pricing_plans': 'POPPY_SYSTEM_PRICING_PLANS'
+        }
     }
 
     with TaskGroup("bronze_layer") as bronze_group:
@@ -155,14 +214,13 @@ with DAG(
                     op_kwargs={'provider': provider, 'endpoint': ep, 'table_name': table}
                 )
 
-    # 3.3 Extraction Bridge (Fan-in point)
+    # 3.3 Extraction Bridge
     extraction_bridge = EmptyOperator(
         task_id="extraction_bridge",
         trigger_rule=TriggerRule.ALL_DONE
     )
 
-    # 3.4 Silver Splinters: One TaskGroup per Provider
-    # This mirrors the visual separation in the Jaffle Shop example
+    # 3.4 Silver Splinters
     provider_splinters = {}
     for provider in PROVIDERS:
         provider_splinters[provider] = DbtTaskGroup(
@@ -170,13 +228,13 @@ with DAG(
             project_config=project_cfg,
             profile_config=profile_cfg,
             render_config=RenderConfig(
-                # Only targets the staging models for this specific provider
-                select=[f"path:models/staging/stg_{provider}"], 
+                # ADDED THE ASTERISK (*): This fixes the 0 tasks bug
+                select=[f"path:models/staging/stg_{provider}*"], 
                 test_behavior=TestBehavior.AFTER_EACH
             )
         )
 
-    # 3.5 Gold Hub: The Unified Marts
+    # 3.5 Gold Hub
     gold_layer = DbtTaskGroup(
         group_id="gold_marts",
         project_config=project_cfg,
@@ -188,7 +246,6 @@ with DAG(
     )
 
     # 3.6 Final Dependency Flow
-    # Bronze >> Bridge >> [Voi Silver, Dott Silver, Bolt Silver] >> Gold
     bronze_group >> extraction_bridge
     for provider in PROVIDERS:
         extraction_bridge >> provider_splinters[provider] >> gold_layer
