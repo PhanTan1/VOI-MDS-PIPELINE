@@ -92,12 +92,16 @@ def setup_infrastructure():
             cur.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(schema)))
         print(f"Schemas verified: {', '.join(schemas)}")
 
-        # --- PHASE 2: Unified Table Creation & Upgrades ---
-        providers = ["VOI", "DOTT", "BOLT"]
-        # Included 'EVENTS' specifically to catch the new Bolt MDS 2.0 data
-        endpoints = ["TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS"]
+        # --- PHASE 2: Strict Provider-to-Endpoint Mapping ---
+        # This prevents the creation of "Ghost Tables" for endpoints a provider doesn't support
+        provider_endpoints = {
+            "VOI": ["TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS", "TELEMETRY"],
+            "DOTT": ["TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS", "STATUS_CHANGES"],
+            "BOLT": ["TRIPS", "VEHICLES", "EVENTS", "STATUS_CHANGES"],
+            "POPPY": ["TRIPS", "FREE_BIKE_STATUS", "VEHICLE_TYPES", "GEOFENCING_ZONES", "SYSTEM_INFORMATION", "SYSTEM_PRICING_PLANS"]
+        }
         
-        for provider in providers:
+        for provider, endpoints in provider_endpoints.items():
             for endpoint in endpoints:
                 table_name = f"{provider}_{endpoint}"
                 
@@ -116,7 +120,7 @@ def setup_infrastructure():
                 )
                 cur.execute(create_query)
 
-                # 2. Upgrade existing tables (The Fix for your Work Computer)
+                # 2. Upgrade existing tables (Idempotent Hash Column)
                 alter_query = sql.SQL('''
                     ALTER TABLE {schema}.{table}
                     ADD COLUMN IF NOT EXISTS md5_hash VARCHAR(32);

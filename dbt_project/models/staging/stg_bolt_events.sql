@@ -20,6 +20,10 @@ SELECT
     item->>'device_id' AS device_id,
     item->>'vehicle_state' AS vehicle_state,
     (item->'event_types')->>0 AS event_type,
+    
+    -- TRIP ID: Pulling the actual ID from the JSON item
+    item->>'trip_id' AS trip_id, 
+    
     (item->'location'->>'lat')::DOUBLE PRECISION AS lat,
     (item->'location'->>'lng')::DOUBLE PRECISION AS lon,
     TO_TIMESTAMP((item->>'timestamp')::BIGINT / 1000.0) AS reported_at

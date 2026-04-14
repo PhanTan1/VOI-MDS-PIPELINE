@@ -1,31 +1,25 @@
 {{ config(materialized='view') }}
 
-WITH base_extraction AS (
-    -- Safely identify the trips array
-    SELECT 
+WITH raw_trips AS (
+    SELECT jsonb_array_elements(
         CASE 
-            WHEN content ? 'data' AND (content->'data') ? 'trips' THEN content->'data'->'trips'
             WHEN content ? 'trips' THEN content->'trips'
+            WHEN content ? 'data' AND (content->'data') ? 'trips' THEN content->'data'->'trips'
             ELSE '[]'::jsonb
-        END AS trips_array
+        END
+    ) AS item
     FROM {{ source('raw_mds', 'BOLT_TRIPS') }}
-),
-
-unnested_trips AS (
-    -- Unnest the array laterally
-    SELECT item
-    FROM base_extraction,
-    LATERAL jsonb_array_elements(trips_array) AS item
 )
 
 SELECT DISTINCT
-    -- Extract the verified trip_id
+    -- Using the exact key from your snippet: "trip_id"
     (item->>'trip_id')::TEXT AS trip_id,
     (item->>'device_id')::TEXT AS vehicle_id,
     
     (item->>'duration')::INTEGER AS duration,
     (item->>'distance')::DOUBLE PRECISION AS distance,
     
+    -- Ensure milliseconds are converted to seconds for TO_TIMESTAMP
     TO_TIMESTAMP((item->>'start_time')::BIGINT / 1000.0) AS started_at,
     TO_TIMESTAMP((item->>'end_time')::BIGINT / 1000.0) AS ended_at,
     
@@ -36,5 +30,5 @@ SELECT DISTINCT
     
     item->>'route' AS route_geom
 
-FROM unnested_trips
+FROM raw_trips
 WHERE item IS NOT NULL
