@@ -26,7 +26,7 @@ WITH all_providers AS (
 
     UNION ALL
 
-    -- 2. DOTT (13 Columns) - Stitched Routes + Readable IDs
+    -- 2. DOTT (13 Columns) - Stitched & Cleaned
     SELECT 
         t.trip_id::TEXT, 
         t.vehicle_short_id::TEXT AS vehicle_id,
@@ -40,32 +40,31 @@ WITH all_providers AS (
         t.start_lon::FLOAT, 
         t.end_lat::FLOAT, 
         t.end_lon::FLOAT,
-        
+        -- Stitch App Start/End to IoT Route and remove stationary pings
         ST_RemoveRepeatedPoints(
-    CASE 
-        WHEN tel.telemetry_route_geom IS NOT NULL THEN
-            ST_MakeLine(
-                ST_SetSRID(ST_MakePoint(t.start_lon, t.start_lat), 4326), 
-                ST_MakeLine(
-                    tel.telemetry_route_geom,                             
-                    ST_SetSRID(ST_MakePoint(t.end_lon, t.end_lat), 4326)  
-                )
-            )::GEOMETRY
-        ELSE
-            t.route_geom::GEOMETRY 
-    END
-) AS route_geom
-
+            CASE 
+                WHEN tel.telemetry_route_geom IS NOT NULL THEN
+                    ST_MakeLine(
+                        ST_SetSRID(ST_MakePoint(t.start_lon, t.start_lat), 4326), 
+                        ST_MakeLine(tel.telemetry_route_geom, ST_SetSRID(ST_MakePoint(t.end_lon, t.end_lat), 4326))
+                    )
+                ELSE t.route_geom
+            END
+        )::GEOMETRY AS route_geom
     FROM {{ ref('stg_dott_trips') }} t
     LEFT JOIN {{ ref('stg_dott_telemetry') }} tel ON t.trip_id = tel.trip_id
 
     UNION ALL
 
-    -- 3. BOLT (13 Columns)
+    -- 3. BOLT (13 Columns) - Standardized vehicle_type
     SELECT 
         trip_id::TEXT, 
         vehicle_short_id::TEXT AS vehicle_id, 
-        vehicle_type::TEXT, 
+        -- Mapping Bolt scooter standing to standard scooter
+        CASE 
+            WHEN vehicle_type = 'scooter_standing' THEN 'scooter'
+            ELSE vehicle_type 
+        END::TEXT AS vehicle_type, 
         provider_name::TEXT,
         started_at::TIMESTAMP AS start_ts, 
         ended_at::TIMESTAMP AS end_ts, 
@@ -94,7 +93,7 @@ WITH all_providers AS (
         start_lon::FLOAT, 
         end_lat::FLOAT, 
         end_lon::FLOAT,
-        -- FIX: Use the native geometry from Poppy's GeoJSON
+        -- Uses native route_geom from the corrected stg_poppy_trips
         route_geom::GEOMETRY AS route_geom
     FROM {{ ref('stg_poppy_trips') }}
 )
@@ -108,11 +107,11 @@ SELECT
     end_ts AS "END_TS",
     trip_duration AS "TRIP_DURATION",
     trip_distance_meters AS "TRIP_DISTANCE",
-    start_lat AS "START_LAT",
-    start_lon AS "START_LON",
-    end_lat AS "END_LAT",
-    end_lon AS "END_LON",
-    -- Dynamically generate the JSON format from the geometry for API usage
+    -- Dynamically extract start/end from geometry for 100% consistency
+    ST_Y(ST_StartPoint(route_geom))::FLOAT AS "START_LAT",
+    ST_X(ST_StartPoint(route_geom))::FLOAT AS "START_LON",
+    ST_Y(ST_EndPoint(route_geom))::FLOAT AS "END_LAT",
+    ST_X(ST_EndPoint(route_geom))::FLOAT AS "END_LON",
     ST_AsGeoJSON(route_geom)::jsonb AS "ROUTE", 
     route_geom AS "GEOM"
 FROM all_providers

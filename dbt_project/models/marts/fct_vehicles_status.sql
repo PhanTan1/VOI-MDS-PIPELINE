@@ -11,7 +11,11 @@ WITH bolt_normalized AS (
     SELECT
         t.device_id::TEXT AS device_id,
         COALESCE(r.vehicle_id, t.device_id)::TEXT AS vehicle_id,
-        COALESCE(r.vehicle_type, 'scooter')::TEXT AS vehicle_type,
+        -- Standardizing to 'scooter' and handling nulls
+        CASE 
+            WHEN r.vehicle_type = 'scooter_standing' THEN 'scooter'
+            ELSE COALESCE(r.vehicle_type, 'scooter')
+        END::TEXT AS vehicle_type,
         'Bolt'::TEXT AS provider_name,
         t.vehicle_state::TEXT AS vehicle_state,
         t.event_type::TEXT AS event_type,
