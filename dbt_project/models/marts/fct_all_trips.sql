@@ -29,7 +29,7 @@ WITH all_providers AS (
     -- 2. DOTT (13 Columns) - Stitched Routes + Readable IDs
     SELECT 
         t.trip_id::TEXT, 
-        t.vehicle_short_id::TEXT AS vehicle_id, -- Already coalesced in staging!
+        t.vehicle_short_id::TEXT AS vehicle_id,
         t.vehicle_type::TEXT, 
         t.provider_name::TEXT,
         t.start_ts::TIMESTAMP, 
@@ -40,9 +40,23 @@ WITH all_providers AS (
         t.start_lon::FLOAT, 
         t.end_lat::FLOAT, 
         t.end_lon::FLOAT,
-        COALESCE(tel.telemetry_route_geom, t.route_geom)::GEOMETRY AS route_geom
+        
+        ST_RemoveRepeatedPoints(
+    CASE 
+        WHEN tel.telemetry_route_geom IS NOT NULL THEN
+            ST_MakeLine(
+                ST_SetSRID(ST_MakePoint(t.start_lon, t.start_lat), 4326), 
+                ST_MakeLine(
+                    tel.telemetry_route_geom,                             
+                    ST_SetSRID(ST_MakePoint(t.end_lon, t.end_lat), 4326)  
+                )
+            )::GEOMETRY
+        ELSE
+            t.route_geom::GEOMETRY 
+    END
+) AS route_geom
+
     FROM {{ ref('stg_dott_trips') }} t
-    -- Removed the redundant LEFT JOIN to stg_dott_vehicles here
     LEFT JOIN {{ ref('stg_dott_telemetry') }} tel ON t.trip_id = tel.trip_id
 
     UNION ALL
