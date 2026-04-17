@@ -15,8 +15,20 @@ sources:
       - name: DOTT_VEHICLES
       - name: DOTT_TRIPS
       - name: DOTT_VEHICLES_STATUS
+      - name: DOTT_EVENTS          # Added to fix your error
+      - name: DOTT_TELEMETRY       # Added for your new telemetry model
+      - name: DOTT_STATUS_CHANGES   
 
       # --- BOLT TABLES ---
       - name: BOLT_VEHICLES
       - name: BOLT_EVENTS
       - name: BOLT_TRIPS
+      - name: BOLT_STATUS_CHANGES   
+
+      # --- POPPY TABLES ---
+      - name: POPPY_TRIPS
+      - name: POPPY_FREE_BIKE_STATUS
+      - name: POPPY_VEHICLE_TYPES
+      - name: POPPY_GEOFENCING_ZONES
+      - name: POPPY_SYSTEM_INFORMATION
+      - name: POPPY_SYSTEM_PRICING_PLANS

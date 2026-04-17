@@ -78,31 +78,41 @@ def setup_infrastructure():
         print("Checking for PostGIS extension...")
         if not check_extension_exists(cur, 'postgis'):
             print("PostGIS not found. Attempting to install...")
-            try:
-                cur.execute('CREATE EXTENSION IF NOT EXISTS postgis;')
-                print("PostGIS installed successfully.")
-            except errors.InsufficientPrivilege:
-                print("Error: You do not have permission to install PostGIS.")
+            cur.execute('CREATE EXTENSION IF NOT EXISTS postgis;')
+            print("PostGIS installed successfully.")
         else:
             print("PostGIS extension already exists.")
 
         # --- PHASE 1: Schema Creation ---
+        # Following Medallion Architecture: Raw (Bronze), Staging (Silver), Analytics (Gold)
         schemas = ["MICROMOBILITY_RAW", "MICROMOBILITY_STAGING", "MICROMOBILITY_ANALYTICS"]
         for schema in schemas:
             cur.execute(sql.SQL('CREATE SCHEMA IF NOT EXISTS {}').format(sql.Identifier(schema)))
         print(f"Schemas verified: {', '.join(schemas)}")
 
         # --- PHASE 2: Strict Provider-to-Endpoint Mapping ---
-        # This prevents the creation of "Ghost Tables" for endpoints a provider doesn't support
+        # Refined based on 2026 API Discovery
         provider_endpoints = {
-            "VOI": ["TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS", "TELEMETRY"],
-            "DOTT": ["TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS", "STATUS_CHANGES"],
-            "BOLT": ["TRIPS", "VEHICLES", "EVENTS", "STATUS_CHANGES"],
-            "POPPY": ["TRIPS", "FREE_BIKE_STATUS", "VEHICLE_TYPES", "GEOFENCING_ZONES", "SYSTEM_INFORMATION", "SYSTEM_PRICING_PLANS"]
+            "VOI": [
+                "TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS"
+                # TELEMETRY removed (Returns 501 Not Implemented)
+            ],
+            "DOTT": [
+                "TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS", 
+                "STATUS_CHANGES", "TELEMETRY" # TELEMETRY added for high-precision routing
+            ],
+            "BOLT": [
+                "TRIPS", "VEHICLES", "EVENTS", "STATUS_CHANGES"
+            ],
+            "POPPY": [
+                "TRIPS", "FREE_BIKE_STATUS", "VEHICLE_TYPES", 
+                "GEOFENCING_ZONES", "SYSTEM_INFORMATION", "SYSTEM_PRICING_PLANS"
+            ]
         }
         
         for provider, endpoints in provider_endpoints.items():
             for endpoint in endpoints:
+                # Standardized Table Naming (e.g., POPPY_FREE_BIKE_STATUS)
                 table_name = f"{provider}_{endpoint}"
                 
                 # 1. Create table if it is brand new
@@ -120,7 +130,7 @@ def setup_infrastructure():
                 )
                 cur.execute(create_query)
 
-                # 2. Upgrade existing tables (Idempotent Hash Column)
+                # 2. Upgrade existing tables (Idempotent Column check)
                 alter_query = sql.SQL('''
                     ALTER TABLE {schema}.{table}
                     ADD COLUMN IF NOT EXISTS md5_hash VARCHAR(32);

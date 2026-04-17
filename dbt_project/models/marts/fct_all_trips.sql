@@ -6,80 +6,85 @@
     )
 }}
 
-WITH bolt_trips AS (
-    SELECT * FROM {{ ref('stg_bolt_trips') }}
-),
-
-bolt_registry AS (
-    SELECT * FROM {{ ref('stg_bolt_vehicles') }}
-),
-
-bolt_normalized AS (
-    SELECT
-        t.trip_id::TEXT AS trip_id,
-        t.vehicle_id::TEXT AS vehicle_id,
-        COALESCE(r.vehicle_type, 'scooter')::TEXT AS vehicle_type,
-        'Bolt'::TEXT AS provider_name,
-        t.started_at::TIMESTAMP AS start_ts,
-        t.ended_at::TIMESTAMP AS end_ts,
-        t.duration::INTEGER AS trip_duration,
-        t.distance::DOUBLE PRECISION AS trip_distance_meters,
-        t.start_lat::DOUBLE PRECISION AS start_lat,
-        t.start_lon::DOUBLE PRECISION AS start_lon,
-        t.end_lat::DOUBLE PRECISION AS end_lat,
-        t.end_lon::DOUBLE PRECISION AS end_lon,
-        -- BOLT FIX: PostGIS rejects 'FeatureCollection'. 
-        -- Keep the rich JSON for the frontend ROUTE, but build a simple line for the database GEOM.
-        t.route_geom::TEXT AS route_json, 
-        ST_MakeLine(
-            ST_SetSRID(ST_MakePoint(t.start_lon, t.start_lat), 4326),
-            ST_SetSRID(ST_MakePoint(t.end_lon, t.end_lat), 4326)
-        )::GEOMETRY AS route_geom 
-    FROM bolt_trips t
-    LEFT JOIN bolt_registry r 
-        ON t.vehicle_id = r.device_id
-),
-
-combined_trips AS (
-    -- VOI
+WITH all_providers AS (
+    -- 1. VOI (13 Columns)
     SELECT 
         trip_id::TEXT, 
         vehicle_short_id::TEXT AS vehicle_id, 
         vehicle_type::TEXT, 
-        'Voi'::TEXT AS provider_name, 
-        start_ts::TIMESTAMP, end_ts::TIMESTAMP, trip_duration::INTEGER, trip_distance_meters::DOUBLE PRECISION, 
-        start_lat::DOUBLE PRECISION, start_lon::DOUBLE PRECISION, end_lat::DOUBLE PRECISION, end_lon::DOUBLE PRECISION, 
-        ST_AsGeoJSON(route_geom)::TEXT AS route_json, 
-        route_geom::GEOMETRY AS route_geom
+        provider_name::TEXT,
+        start_ts::TIMESTAMP, 
+        end_ts::TIMESTAMP, 
+        trip_duration::NUMERIC, 
+        trip_distance_meters::FLOAT,
+        start_lat::FLOAT, 
+        start_lon::FLOAT, 
+        end_lat::FLOAT, 
+        end_lon::FLOAT, 
+        route_geom::GEOMETRY
     FROM {{ ref('stg_voi_trips') }}
 
     UNION ALL
 
-    -- DOTT
+    -- 2. DOTT (13 Columns) - Stitched Routes + Readable IDs
+    SELECT 
+        t.trip_id::TEXT, 
+        t.vehicle_short_id::TEXT AS vehicle_id, -- Already coalesced in staging!
+        t.vehicle_type::TEXT, 
+        t.provider_name::TEXT,
+        t.start_ts::TIMESTAMP, 
+        t.end_ts::TIMESTAMP, 
+        t.trip_duration::NUMERIC, 
+        t.trip_distance_meters::FLOAT,
+        t.start_lat::FLOAT, 
+        t.start_lon::FLOAT, 
+        t.end_lat::FLOAT, 
+        t.end_lon::FLOAT,
+        COALESCE(tel.telemetry_route_geom, t.route_geom)::GEOMETRY AS route_geom
+    FROM {{ ref('stg_dott_trips') }} t
+    -- Removed the redundant LEFT JOIN to stg_dott_vehicles here
+    LEFT JOIN {{ ref('stg_dott_telemetry') }} tel ON t.trip_id = tel.trip_id
+
+    UNION ALL
+
+    -- 3. BOLT (13 Columns)
     SELECT 
         trip_id::TEXT, 
         vehicle_short_id::TEXT AS vehicle_id, 
         vehicle_type::TEXT, 
-        'Dott'::TEXT AS provider_name, 
-        start_ts::TIMESTAMP, end_ts::TIMESTAMP, trip_duration::INTEGER, trip_distance_meters::DOUBLE PRECISION, 
-        start_lat::DOUBLE PRECISION, start_lon::DOUBLE PRECISION, end_lat::DOUBLE PRECISION, end_lon::DOUBLE PRECISION, 
-        ST_AsGeoJSON(route_geom)::TEXT AS route_json,
-        route_geom::GEOMETRY AS route_geom
-    FROM {{ ref('stg_dott_trips') }}
+        provider_name::TEXT,
+        started_at::TIMESTAMP AS start_ts, 
+        ended_at::TIMESTAMP AS end_ts, 
+        duration::NUMERIC AS trip_duration, 
+        distance::FLOAT AS trip_distance_meters,
+        start_lat::FLOAT, 
+        start_lon::FLOAT, 
+        end_lat::FLOAT, 
+        end_lon::FLOAT,
+        ST_MakeLine(ST_SetSRID(ST_MakePoint(start_lon, start_lat), 4326), ST_SetSRID(ST_MakePoint(end_lon, end_lat), 4326))::GEOMETRY AS route_geom
+    FROM {{ ref('stg_bolt_trips') }}
 
     UNION ALL
 
-    -- BOLT
+    -- 4. POPPY (13 Columns)
     SELECT 
-        trip_id, vehicle_id, vehicle_type, provider_name, 
-        start_ts, end_ts, trip_duration, trip_distance_meters, 
-        start_lat, start_lon, end_lat, end_lon, 
-        route_json, 
-        route_geom
-    FROM bolt_normalized
+        trip_id::TEXT, 
+        vehicle_short_id::TEXT AS vehicle_id, 
+        vehicle_type::TEXT, 
+        provider_name::TEXT,
+        start_ts::TIMESTAMP, 
+        end_ts::TIMESTAMP, 
+        trip_duration::NUMERIC, 
+        trip_distance_meters::FLOAT,
+        start_lat::FLOAT, 
+        start_lon::FLOAT, 
+        end_lat::FLOAT, 
+        end_lon::FLOAT,
+        -- FIX: Use the native geometry from Poppy's GeoJSON
+        route_geom::GEOMETRY AS route_geom
+    FROM {{ ref('stg_poppy_trips') }}
 )
 
--- 2. Final Selection and Column Casing
 SELECT
     trip_id AS "TRIP_ID",
     vehicle_id AS "VEHICLE_ID",
@@ -93,12 +98,7 @@ SELECT
     start_lon AS "START_LON",
     end_lat AS "END_LAT",
     end_lon AS "END_LON",
-    
-    -- NULLIF prevents empty strings from breaking the JSONB cast
-    COALESCE(NULLIF(route_json, ''), ST_AsGeoJSON(route_geom))::JSONB AS "ROUTE",
-    ST_SetSRID(route_geom::geometry, 4326) AS "GEOM" 
-FROM combined_trips
-
-{% if is_incremental() %}
-  WHERE end_ts >= (SELECT MAX("END_TS") - INTERVAL '3 days' FROM {{ this }})
-{% endif %}
+    -- Dynamically generate the JSON format from the geometry for API usage
+    ST_AsGeoJSON(route_geom)::jsonb AS "ROUTE", 
+    route_geom AS "GEOM"
+FROM all_providers
