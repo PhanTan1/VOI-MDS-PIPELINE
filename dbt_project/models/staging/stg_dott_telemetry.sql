@@ -25,5 +25,3 @@ SELECT
     )::geometry(LineString, 4326) AS telemetry_route_geom
 FROM unnested_pings
 GROUP BY trip_id
-
-LINESTRING (4.380975 50.894442, 4.357792 50.900183)
