@@ -60,7 +60,6 @@ WITH all_providers AS (
     SELECT 
         trip_id::TEXT, 
         vehicle_short_id::TEXT AS vehicle_id, 
-        -- Mapping Bolt scooter standing to standard scooter
         CASE 
             WHEN vehicle_type = 'scooter_standing' THEN 'scooter'
             ELSE vehicle_type 
@@ -93,9 +92,16 @@ WITH all_providers AS (
         start_lon::FLOAT, 
         end_lat::FLOAT, 
         end_lon::FLOAT,
-        -- Uses native route_geom from the corrected stg_poppy_trips
         route_geom::GEOMETRY AS route_geom
     FROM {{ ref('stg_poppy_trips') }}
+),
+
+-- THE FIX: Global Deduplication (Squashes Dott's overlapping API results)
+deduplicated_trips AS (
+    SELECT DISTINCT ON (trip_id)
+        *
+    FROM all_providers
+    ORDER BY trip_id, start_ts DESC
 )
 
 SELECT
@@ -107,11 +113,10 @@ SELECT
     end_ts AS "END_TS",
     trip_duration AS "TRIP_DURATION",
     trip_distance_meters AS "TRIP_DISTANCE",
-    -- Dynamically extract start/end from geometry for 100% consistency
     ST_Y(ST_StartPoint(route_geom))::FLOAT AS "START_LAT",
     ST_X(ST_StartPoint(route_geom))::FLOAT AS "START_LON",
     ST_Y(ST_EndPoint(route_geom))::FLOAT AS "END_LAT",
     ST_X(ST_EndPoint(route_geom))::FLOAT AS "END_LON",
     ST_AsGeoJSON(route_geom)::jsonb AS "ROUTE", 
     route_geom AS "GEOM"
-FROM all_providers
+FROM deduplicated_trips
