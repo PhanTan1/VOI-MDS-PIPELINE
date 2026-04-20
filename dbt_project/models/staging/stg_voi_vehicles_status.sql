@@ -10,14 +10,14 @@ unnested_status AS (
 )
 
 SELECT DISTINCT
-    -- Stealing the readable ID and Type from your Vehicles table!
     v.vehicle_id AS vehicle_short_id,
     v.vehicle_type AS vehicle_type,
-    
     s.item->>'device_id' AS device_id,
     s.item->'last_event'->>'vehicle_state' AS vehicle_state,
-    s.item->'last_event'->'event_types'->>0 AS event_type,
-    s.item->'last_event'->'trip_ids'->>0 AS trip_id,
+    
+    -- FIX: Ignore historical events to prevent duplicate status rows
+    'telemetry' AS event_type,
+    NULL AS trip_id,
     
     (s.item->'last_telemetry'->'location'->>'lat')::float AS lat,
     (s.item->'last_telemetry'->'location'->>'lng')::float AS lon,

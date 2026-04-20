@@ -7,6 +7,6 @@ WITH base_extraction AS (
 
 SELECT DISTINCT
     v->>'device_id' AS device_id,       
-    v->>'vehicle_id' AS vehicle_id,     -- This will successfully pull "5GTK84"
-    COALESCE(v->>'vehicle_type', 'bicycle') AS vehicle_type
+    v->>'vehicle_id' AS vehicle_id,    
+    v->>'vehicle_type' AS vehicle_type
 FROM base_extraction
