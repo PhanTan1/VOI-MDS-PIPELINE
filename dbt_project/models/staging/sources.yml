@@ -15,8 +15,8 @@ sources:
       - name: DOTT_VEHICLES
       - name: DOTT_TRIPS
       - name: DOTT_VEHICLES_STATUS
-      - name: DOTT_EVENTS          # Added to fix your error
-      - name: DOTT_TELEMETRY       # Added for your new telemetry model
+      - name: DOTT_EVENTS          
+      - name: DOTT_TELEMETRY       
       - name: DOTT_STATUS_CHANGES   
 
       # --- BOLT TABLES ---

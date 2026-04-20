@@ -2,7 +2,10 @@ import sys
 import os
 from datetime import datetime
 from airflow import DAG
-from airflow.utils.task_group import TaskGroup
+try:
+    from airflow.sdk import TaskGroup
+except ImportError:
+    from airflow.utils.task_group import TaskGroup
 from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.python import PythonOperator
 from airflow.task.trigger_rule import TriggerRule
@@ -43,17 +46,39 @@ DAILY_ENDPOINTS = {
 
 # --- 2. DAGS ---
 with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), schedule='@hourly', catchup=False) as dag_hourly:
-    with TaskGroup("bronze_layer") as bronze:
-        for provider, tasks in HOURLY_ENDPOINTS.items():
-            for ep, table in tasks.items():
-                PythonOperator(
-                    task_id=f'fetch_{provider}_{ep.replace("/", "_")}',
-                    python_callable=extract_and_load,
-                    op_kwargs={'provider': provider, 'endpoint': ep, 'table_name': table}
-                )
-
-    bridge = EmptyOperator(task_id="extraction_bridge", trigger_rule=TriggerRule.ALL_DONE)
     
+    # We will store the groups in dictionaries to link them specifically by provider
+    bronze_lanes = {}
+    silver_lanes = {}
+
+    # 1. BRONZE LAYER: Parallel Extraction
+    with TaskGroup("bronze_layer") as bronze:
+        for provider in PROVIDERS:
+            with TaskGroup(group_id=provider) as provider_bronze:
+                for ep, table in HOURLY_ENDPOINTS[provider].items():
+                    PythonOperator(
+                        task_id=f'fetch_{ep.replace("/", "_")}',
+                        python_callable=extract_and_load,
+                        op_kwargs={'provider': provider, 'endpoint': ep, 'table_name': table}
+                    )
+            bronze_lanes[provider] = provider_bronze
+
+    # 2. SILVER LAYER: Parallel Transformation (Matches your new folder structure)
+    with TaskGroup("silver_layer") as silver:
+        for provider in PROVIDERS:
+            # Capitalizing to match your folder names: Bolt, Dott, Poppy, Voi
+            folder_name = provider.capitalize() 
+            
+            silver_lanes[provider] = DbtTaskGroup(
+                group_id=f"stg_{provider}",
+                project_config=project_cfg,
+                profile_config=profile_cfg,
+                render_config=RenderConfig(
+                    select=[f"path:models/staging/{folder_name}"]
+                )
+            )
+
+    # 3. GOLD LAYER: Merged Analytics
     gold = DbtTaskGroup(
         group_id="gold_marts",
         project_config=project_cfg,
@@ -61,7 +86,13 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
         render_config=RenderConfig(select=["path:models/marts"])
     )
 
-    bronze >> bridge >> gold
+    # --- UPDATED DEPENDENCY FLOW ---
+    for provider in PROVIDERS:
+        # Each provider's Bronze task triggers its own Silver tasks (The "Parallel Lanes")
+        bronze_lanes[provider] >> silver_lanes[provider]
+        
+        # Every Silver lane must finish before we run the final Gold joins
+        silver_lanes[provider] >> gold
 
 with DAG('micromobility_daily_batch', start_date=datetime(2025, 1, 1), schedule='0 3 * * *', catchup=False) as dag_daily:
     for ep, table in DAILY_ENDPOINTS['poppy'].items():
