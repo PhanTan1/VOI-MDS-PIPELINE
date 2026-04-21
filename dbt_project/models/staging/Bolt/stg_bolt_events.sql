@@ -21,10 +21,11 @@ SELECT
     item->>'vehicle_state' AS vehicle_state,
     (item->'event_types')->>0 AS event_type,
     
-    -- TRIP ID: Pulling the actual ID from the JSON item
-    item->>'trip_id' AS trip_id, 
+    -- RAW: Bolt MDS 2.0 uses array 'trip_ids'
+    item->'trip_ids'->>0 AS trip_id, 
     
     (item->'location'->>'lat')::DOUBLE PRECISION AS lat,
     (item->'location'->>'lng')::DOUBLE PRECISION AS lon,
     TO_TIMESTAMP((item->>'timestamp')::BIGINT / 1000.0) AS reported_at
 FROM unnested_events
+WHERE item IS NOT NULL

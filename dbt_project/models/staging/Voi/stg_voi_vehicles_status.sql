@@ -13,15 +13,15 @@ SELECT DISTINCT
     v.vehicle_id AS vehicle_short_id,
     v.vehicle_type AS vehicle_type,
     s.item->>'device_id' AS device_id,
-    s.item->'last_event'->>'vehicle_state' AS vehicle_state,
     
-    -- FIX: Ignore historical events to prevent duplicate status rows
-    'telemetry' AS event_type,
-    NULL AS trip_id,
+    -- THE FIX: Extract RAW state and event instead of hardcoding
+    s.item->'last_event'->>'vehicle_state' AS vehicle_state,
+    s.item->'last_event'->'event_types'->>0 AS event_type,
+    s.item->'last_event'->'trip_ids'->>0 AS trip_id,
     
     (s.item->'last_telemetry'->'location'->>'lat')::float AS lat,
     (s.item->'last_telemetry'->'location'->>'lng')::float AS lon,
     TO_TIMESTAMP((s.item->'last_telemetry'->>'timestamp')::bigint / 1000.0) AS reported_at
 FROM unnested_status s
-LEFT JOIN {{ ref('stg_voi_vehicles') }} v 
-    ON s.item->>'device_id' = v.device_id
+LEFT JOIN {{ ref('stg_voi_vehicles') }} v ON s.item->>'device_id' = v.device_id
+WHERE s.item IS NOT NULL

@@ -95,14 +95,13 @@ def setup_infrastructure():
         provider_endpoints = {
             "VOI": [
                 "TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS"
-                # TELEMETRY removed (Returns 501 Not Implemented)
             ],
             "DOTT": [
                 "TRIPS", "VEHICLES", "VEHICLES_STATUS", "EVENTS", 
-                "STATUS_CHANGES", "TELEMETRY" # TELEMETRY added for high-precision routing
+                "STATUS_CHANGES", "TELEMETRY" 
             ],
             "BOLT": [
-                "TRIPS", "VEHICLES", "EVENTS", "STATUS_CHANGES"
+                "TRIPS", "VEHICLES", "EVENTS", "STATUS_CHANGES", "TELEMETRY" # Added TELEMETRY for 2.0 routing
             ],
             "POPPY": [
                 "TRIPS", "FREE_BIKE_STATUS", "VEHICLE_TYPES", 

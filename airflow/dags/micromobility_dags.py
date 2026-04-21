@@ -34,24 +34,47 @@ profile_cfg = ProfileConfig(
 PROVIDERS = ['voi', 'dott', 'bolt', 'poppy']
 
 HOURLY_ENDPOINTS = {
-    'voi': {'vehicles': 'VOI_VEHICLES', 'trips': 'VOI_TRIPS', 'vehicles/status': 'VOI_VEHICLES_STATUS', 'events/historical': 'VOI_EVENTS'},
-    'dott': {'vehicles': 'DOTT_VEHICLES', 'trips': 'DOTT_TRIPS', 'vehicles/status': 'DOTT_VEHICLES_STATUS', 'events/historical': 'DOTT_EVENTS', 'telemetry': 'DOTT_TELEMETRY'},
-    'bolt': {'vehicles': 'BOLT_VEHICLES', 'trips': 'BOLT_TRIPS', 'events/historical': 'BOLT_EVENTS', 'status_changes': 'BOLT_STATUS_CHANGES'},
-    'poppy': {'free_bike_status': 'POPPY_FREE_BIKE_STATUS'}
+    'voi': {
+        'vehicles': 'VOI_VEHICLES', 
+        'trips': 'VOI_TRIPS', 
+        'vehicles/status': 'VOI_VEHICLES_STATUS', 
+        'events/historical': 'VOI_EVENTS'
+    },
+    'dott': {
+        'vehicles': 'DOTT_VEHICLES', 
+        'trips': 'DOTT_TRIPS', 
+        'vehicles/status': 'DOTT_VEHICLES_STATUS', 
+        'events/historical': 'DOTT_EVENTS', 
+        'telemetry': 'DOTT_TELEMETRY'
+    },
+    'bolt': {
+        'vehicles': 'BOLT_VEHICLES', 
+        'trips': 'BOLT_TRIPS', 
+        'events/historical': 'BOLT_EVENTS', 
+        'status_changes': 'BOLT_STATUS_CHANGES', # MDS 1.2
+        'telemetry': 'BOLT_TELEMETRY'           # MDS 2.0 - Added for Routing logic
+    },
+    'poppy': {
+        'free_bike_status': 'POPPY_FREE_BIKE_STATUS'
+    }
 }
 
 DAILY_ENDPOINTS = {
-    'poppy': {'trips/brussels': 'POPPY_TRIPS', 'vehicle_types': 'POPPY_VEHICLE_TYPES', 'system_information': 'POPPY_SYSTEM_INFORMATION'}
+    'poppy': {
+        'trips/brussels': 'POPPY_TRIPS', 
+        'vehicle_types': 'POPPY_VEHICLE_TYPES', 
+        'system_information': 'POPPY_SYSTEM_INFORMATION'
+    }
 }
 
 # --- 2. DAGS ---
 with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), schedule='@hourly', catchup=False) as dag_hourly:
     
-    # We will store the groups in dictionaries to link them specifically by provider
     bronze_lanes = {}
     silver_lanes = {}
 
     # 1. BRONZE LAYER: Parallel Extraction
+    # Automatically creates tasks for the new Bolt telemetry and status_changes endpoints
     with TaskGroup("bronze_layer") as bronze:
         for provider in PROVIDERS:
             with TaskGroup(group_id=provider) as provider_bronze:
@@ -63,10 +86,10 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
                     )
             bronze_lanes[provider] = provider_bronze
 
-    # 2. SILVER LAYER: Parallel Transformation (Matches your new folder structure)
+    # 2. SILVER LAYER: Parallel Transformation
+    # Cosmos will automatically include stg_bolt_telemetry.sql and stg_bolt_status_changes.sql
     with TaskGroup("silver_layer") as silver:
         for provider in PROVIDERS:
-            # Capitalizing to match your folder names: Bolt, Dott, Poppy, Voi
             folder_name = provider.capitalize() 
             
             silver_lanes[provider] = DbtTaskGroup(
@@ -88,10 +111,7 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
 
     # --- UPDATED DEPENDENCY FLOW ---
     for provider in PROVIDERS:
-        # Each provider's Bronze task triggers its own Silver tasks (The "Parallel Lanes")
         bronze_lanes[provider] >> silver_lanes[provider]
-        
-        # Every Silver lane must finish before we run the final Gold joins
         silver_lanes[provider] >> gold
 
 with DAG('micromobility_daily_batch', start_date=datetime(2025, 1, 1), schedule='0 3 * * *', catchup=False) as dag_daily:

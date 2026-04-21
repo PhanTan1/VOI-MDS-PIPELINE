@@ -15,7 +15,7 @@ from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- 1. PROVIDER REGISTRY (Mirroring your exact conditional logic) ---
+# --- 1. PROVIDER REGISTRY ---
 PROVIDER_CONFIGS = {
     'voi': {
         'base_url': lambda: f"{Variable.get('VOI_MDS_URL')}/{Variable.get('VOI_ZONE_ID')}",
@@ -27,8 +27,8 @@ PROVIDER_CONFIGS = {
         'base_url': lambda: f"https://mds.api.ridedott.com/{Variable.get('DOTT_REGION', 'brussels')}",
         'version': lambda ep: "1.2" if ep == 'vehicles' else "2.0",
         'auth_func': lambda: f"Bearer {get_dott_token()}",
-        # Mirroring your: if v == "1.2" else f"application/vnd.mds.provider+json"
-        'headers_type': lambda ep: "application/vnd.mds+json" if ep == 'vehicles' else "application/vnd.mds.provider+json"
+        # THE FIX: Explicitly use standard mds+json for events/historical
+        'headers_type': lambda ep: "application/vnd.mds+json" if ep in ['vehicles', 'events/historical'] else "application/vnd.mds.provider+json"
     },
     'bolt': {
         'base_url': lambda: "https://mds.bolt.eu",
@@ -45,7 +45,7 @@ PROVIDER_CONFIGS = {
     }
 }
 
-# --- 2. AUTHENTICATION HELPERS (Your exact original code) ---
+# --- 2. AUTHENTICATION HELPERS ---
 def get_voi_token():
     res = requests.post(Variable.get("VOI_AUTH_URL"), 
                          auth=(Variable.get("VOI_USER_ID"), Variable.get("VOI_PASSWORD")),
@@ -80,10 +80,9 @@ def get_dott_token():
 
 # --- 3. THE SMART INGESTOR ---
 def extract_and_load(provider, endpoint, table_name, **kwargs):
-    # Using utcnow to match your original script
     now = datetime.utcnow()
     
-    # 1. Exact Timing Logic from original
+    # 1. Exact Timing Logic
     delay_hours = 4 if any(x in endpoint for x in ["historical", "trips", "status_changes"]) else 1
     target_dt = now - timedelta(hours=delay_hours)
     target_time_str = target_dt.strftime("%Y-%m-%dT%H")
@@ -97,18 +96,17 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     elif "telemetry" in endpoint:
         params["telemetry_time"] = target_time_str
     elif "trips" in endpoint:
-        params["end_time"] = target_time_str # Mirroring your: ?end_time=2026-04-17T21
+        params["end_time"] = target_time_str
     elif "recent" in endpoint:
         params["start_time"] = int((target_dt - timedelta(hours=1)).timestamp() * 1000)
         params["end_time"] = int(target_dt.timestamp() * 1000)
 
-    # 2. Registry Routing (Functional Mirror)
+    # 2. Registry Routing
     config = PROVIDER_CONFIGS[provider]
-    url = f"{config['base_url']()}/{endpoint}"
+    current_url = f"{config['base_url']()}/{endpoint}"
     version = config['version'](endpoint)
     h_type = config['headers_type'](endpoint)
     
-    # Mirroring your exact header construction
     headers = {
         config.get('auth_header', 'Authorization'): config['auth_func'](),
         "Accept": f"{h_type};version={version}"
@@ -116,25 +114,46 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     if provider == 'poppy':
         headers["User-Agent"] = "Mozilla/5.0"
 
-    # 3. Execution & Bronze Storage
-    response = requests.get(url, headers=headers, params=params, verify=False, timeout=30)
-    
-    if response.status_code in [403, 404, 501]:
-        logging.warning(f"Bypassing {provider} {endpoint}: API {response.status_code}")
-        return
-
-    response.raise_for_status()
-    data = response.json()
-    content_str = json.dumps(data, sort_keys=True)
-    current_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
     pg_hook = PostgresHook(postgres_conn_id='postgres_raw')
-    
-    last_hash = pg_hook.get_first(f'SELECT md5_hash FROM "MICROMOBILITY_RAW"."{table_name}" ORDER BY file_ts DESC LIMIT 1')
-    
-    if not (last_hash and last_hash[0] == current_hash):
-        # Mirroring your: file_time logic
-        file_time = now.strftime("%Y%m%d") if 'poppy' in provider and 'trips' in endpoint else target_time_str
-        pg_hook.run(
-            f'INSERT INTO "MICROMOBILITY_RAW"."{table_name}" (content, filename, file_ts, md5_hash) VALUES (%s, %s, %s, %s)',
-            parameters=(content_str, f"{provider}_{endpoint.replace('/', '_')}_{file_time}.json", now, current_hash)
-        )
+    page_count = 1
+
+    # 3. PAGINATED Execution & Bronze Storage
+    while current_url:
+        logging.info(f"Fetching {provider} {endpoint} - Page {page_count}")
+        response = requests.get(current_url, headers=headers, params=params, verify=False, timeout=30)
+        
+        if response.status_code in [403, 404, 501]:
+            logging.warning(f"Bypassing {provider} {endpoint}: API {response.status_code}")
+            break
+
+        response.raise_for_status()
+        data = response.json()
+        
+        # Hash and Insert logic applied per-page
+        content_str = json.dumps(data, sort_keys=True)
+        current_hash = hashlib.md5(content_str.encode('utf-8')).hexdigest()
+        
+        # Check against the last inserted hash for this table to prevent total duplicates on re-runs
+        last_hash_record = pg_hook.get_first(f'SELECT md5_hash FROM "MICROMOBILITY_RAW"."{table_name}" ORDER BY load_ts DESC LIMIT 1')
+        
+        if not (last_hash_record and last_hash_record[0] == current_hash):
+            file_time = now.strftime("%Y%m%d") if 'poppy' in provider and 'trips' in endpoint else target_time_str
+            # Append page number to filename
+            filename = f"{provider}_{endpoint.replace('/', '_')}_{file_time}_p{page_count}.json"
+            
+            pg_hook.run(
+                f'INSERT INTO "MICROMOBILITY_RAW"."{table_name}" (content, filename, file_ts, md5_hash) VALUES (%s, %s, %s, %s)',
+                parameters=(content_str, filename, now, current_hash)
+            )
+        
+        # Paginator: Check for 'links.next'
+        next_link = None
+        if isinstance(data, dict):
+            next_link = data.get('links', {}).get('next')
+        
+        if next_link:
+            current_url = next_link
+            params = {}  # Clear params as the 'next' URL contains them
+            page_count += 1
+        else:
+            current_url = None # Exit the loop if no more pages or if data is a list

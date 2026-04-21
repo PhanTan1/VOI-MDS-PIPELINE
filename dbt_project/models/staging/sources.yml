@@ -23,7 +23,8 @@ sources:
       - name: BOLT_VEHICLES
       - name: BOLT_EVENTS
       - name: BOLT_TRIPS
-      - name: BOLT_STATUS_CHANGES   
+      - name: BOLT_STATUS_CHANGES
+      - name: BOLT_TELEMETRY        
 
       # --- POPPY TABLES ---
       - name: POPPY_TRIPS

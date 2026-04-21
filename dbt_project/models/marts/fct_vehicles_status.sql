@@ -1,4 +1,3 @@
--- Performance: BRIN for time-series, B-Tree for Joins
 {{ 
     config(
         materialized='incremental',
@@ -7,77 +6,71 @@
     )
 }}
 
-WITH bolt_normalized AS (
-    SELECT
-        t.device_id::TEXT AS device_id,
-        COALESCE(r.vehicle_id, t.device_id)::TEXT AS vehicle_id,
-        -- Standardizing to 'scooter' and handling nulls
-        CASE 
-            WHEN r.vehicle_type = 'scooter_standing' THEN 'scooter'
-            ELSE COALESCE(r.vehicle_type, 'scooter')
-        END::TEXT AS vehicle_type,
-        'Bolt'::TEXT AS provider_name,
-        t.vehicle_state::TEXT AS vehicle_state,
-        t.event_type::TEXT AS event_type,
-        t.lat::DOUBLE PRECISION AS lat,
-        t.lon::DOUBLE PRECISION AS lon,
-        t.trip_id::TEXT AS trip_id,
-        t.reported_at::TIMESTAMP AS reported_at
-    FROM {{ ref('stg_bolt_events') }} t
-    LEFT JOIN {{ ref('stg_bolt_vehicles') }} r ON t.device_id = r.device_id
-),
-
-combined_staging AS (
-    -- VOI
-    SELECT 
-        vehicle_short_id::TEXT AS vehicle_id, vehicle_type::TEXT, 'Voi'::TEXT AS provider_name, 
-        vehicle_state::TEXT, event_type::TEXT, lat::DOUBLE PRECISION, lon::DOUBLE PRECISION, 
-        trip_id::TEXT, reported_at::TIMESTAMP
-    FROM {{ ref('stg_voi_vehicles_status') }}
-    
-    UNION ALL
-    
-    -- DOTT STATUS
+WITH combined_staging AS (
+    -- 1. VOI (Fixed: Now unions Events + Status)
     SELECT 
         COALESCE(v.vehicle_id, s.device_id)::TEXT AS vehicle_id, 
-        s.vehicle_type::TEXT, 'Dott'::TEXT AS provider_name, 
-        s.vehicle_state::TEXT, s.event_type::TEXT, s.lat, s.lon, s.trip_id, s.reported_at
-    FROM {{ ref('stg_dott_vehicles_status') }} s
-    LEFT JOIN {{ ref('stg_dott_vehicles') }} v ON s.device_id = v.device_id
-    
+        COALESCE(v.vehicle_type, 'scooter')::TEXT AS vehicle_type, 
+        'Voi'::TEXT AS provider_name, s.vehicle_state, s.event_type, s.lat, s.lon, s.trip_id, s.reported_at
+    FROM (
+        SELECT device_id, vehicle_state, event_type, trip_id, lat, lon, reported_at FROM {{ ref('stg_voi_events') }}
+        UNION ALL
+        SELECT device_id, vehicle_state, event_type, trip_id, lat, lon, reported_at FROM {{ ref('stg_voi_vehicles_status') }}
+    ) s
+    LEFT JOIN {{ ref('stg_voi_vehicles') }} v ON s.device_id = v.device_id
+
     UNION ALL
-    
-    -- DOTT EVENTS (Historical stream)
+
+    -- 2. DOTT (Fixed: Injected missing trip_id column)
     SELECT 
-        COALESCE(v.vehicle_id, e.device_id)::TEXT AS vehicle_id, 
-        COALESCE(v.vehicle_type, 'bicycle')::TEXT, 'Dott' AS provider_name, 
-        e.vehicle_state, e.event_type, e.lat, e.lon, e.trip_id, e.reported_at
-    FROM {{ ref('stg_dott_events') }} e
-    LEFT JOIN {{ ref('stg_dott_vehicles') }} v ON e.device_id = v.device_id
+        COALESCE(v.vehicle_id, d.device_id)::TEXT AS vehicle_id, 
+        COALESCE(v.vehicle_type, d.vehicle_type, 'bicycle')::TEXT AS vehicle_type, 
+        'Dott'::TEXT AS provider_name, d.vehicle_state, d.event_type, d.lat, d.lon, d.trip_id, d.reported_at
+    FROM (
+        SELECT device_id, vehicle_state, event_type, trip_id, lat, lon, reported_at, NULL as vehicle_type FROM {{ ref('stg_dott_events') }}
+        UNION ALL
+        SELECT device_id, vehicle_state, event_type, NULL as trip_id, lat, lon, reported_at, vehicle_type FROM {{ ref('stg_dott_vehicles_status') }}
+    ) d
+    LEFT JOIN {{ ref('stg_dott_vehicles') }} v ON d.device_id = v.device_id
 
     UNION ALL
-    
-    -- BOLT
+
+    -- 3. BOLT
     SELECT 
-        vehicle_id, vehicle_type, provider_name, 
-        vehicle_state, event_type, lat, lon, trip_id, reported_at
-    FROM bolt_normalized
+        COALESCE(v.vehicle_id, b.device_id)::TEXT AS vehicle_id, 
+        CASE WHEN COALESCE(v.vehicle_type, b.vehicle_type) = 'scooter_standing' THEN 'scooter' ELSE 'scooter' END::TEXT AS vehicle_type, 
+        'Bolt'::TEXT AS provider_name, b.vehicle_state, b.event_type, b.lat, b.lon, b.trip_id, b.reported_at
+    FROM (
+        SELECT device_id, vehicle_state, event_type, trip_id, lat, lon, reported_at, NULL as vehicle_type FROM {{ ref('stg_bolt_events') }}
+        UNION ALL
+        SELECT device_id, vehicle_state, event_type, trip_id, lat, lon, reported_at, vehicle_type FROM {{ ref('stg_bolt_status_changes') }}
+    ) b
+    LEFT JOIN {{ ref('stg_bolt_vehicles') }} v ON b.device_id = v.device_id
 
     UNION ALL
 
-    -- POPPY
+    -- 4. POPPY
     SELECT 
         vehicle_id::TEXT, vehicle_type::TEXT, 'Poppy'::TEXT AS provider_name,
         'available' AS vehicle_state, 'telemetry' AS event_type, lat, lon, NULL AS trip_id, reported_at
     FROM {{ ref('stg_poppy_vehicles_status') }}
 ),
 
--- DEDUPLICATION: Removes same-millisecond duplicates
-deduplicated_staging AS (
-    SELECT DISTINCT ON (vehicle_id, provider_name, reported_at)
-        *
+-- THE CHANGE DETECTION: Collapses rows if nothing changed (Fixes Poppy drift)
+change_tracking AS (
+    SELECT *,
+        LAG(vehicle_state) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) as prev_state,
+        LAG(lat) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) as prev_lat,
+        LAG(lon) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) as prev_lon
     FROM combined_staging
-    ORDER BY vehicle_id, provider_name, reported_at, event_type
+),
+
+filtered_staging AS (
+    SELECT * FROM change_tracking
+    WHERE prev_state IS NULL -- Keep first row
+       OR vehicle_state != prev_state -- Keep state changes
+       OR ABS(lat - prev_lat) > 0.0005 -- Keep movement > ~50m
+       OR ABS(lon - prev_lon) > 0.0005
 )
 
 SELECT
@@ -92,9 +85,8 @@ SELECT
     trip_id AS "TRIP_ID",
     reported_at AS "VALID_FROM_TS",
     LEAD(reported_at) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) AS "VALID_TO_TS"
-FROM deduplicated_staging
+FROM filtered_staging
 WHERE vehicle_id IS NOT NULL
-
 {% if is_incremental() %}
-  AND reported_at >= (SELECT MAX("VALID_FROM_TS") - INTERVAL '3 days' FROM {{ this }})
+  AND reported_at >= (SELECT MAX("VALID_FROM_TS") - INTERVAL '1 day' FROM {{ this }})
 {% endif %}
