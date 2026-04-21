@@ -25,10 +25,11 @@ PROVIDER_CONFIGS = {
     },
     'dott': {
         'base_url': lambda: f"https://mds.api.ridedott.com/{Variable.get('DOTT_REGION', 'brussels')}",
-        'version': lambda ep: "1.2" if ep == 'vehicles' else "2.0",
+        # THE FIX: Add 'events' to the MDS 1.2 fallback
+        'version': lambda ep: "1.2" if ep in ['vehicles', 'events'] else "2.0",
         'auth_func': lambda: f"Bearer {get_dott_token()}",
-        # THE FIX: Explicitly use standard mds+json for events/historical
-        'headers_type': lambda ep: "application/vnd.mds+json" if ep in ['vehicles', 'events/historical'] else "application/vnd.mds.provider+json"
+        # THE FIX: Add 'events' to the standard headers
+        'headers_type': lambda ep: "application/vnd.mds+json" if ep in ['vehicles', 'events'] else "application/vnd.mds.provider+json"
     },
     'bolt': {
         'base_url': lambda: "https://mds.bolt.eu",
@@ -98,6 +99,11 @@ def extract_and_load(provider, endpoint, table_name, **kwargs):
     elif "trips" in endpoint:
         params["end_time"] = target_time_str
     elif "recent" in endpoint:
+        params["start_time"] = int((target_dt - timedelta(hours=1)).timestamp() * 1000)
+        params["end_time"] = int(target_dt.timestamp() * 1000)
+    # Under the "2. Exact Timing Logic" section, add this:
+    elif endpoint == "events":
+        # Dott real-time events use millisecond timestamps
         params["start_time"] = int((target_dt - timedelta(hours=1)).timestamp() * 1000)
         params["end_time"] = int(target_dt.timestamp() * 1000)
 

@@ -44,7 +44,7 @@ HOURLY_ENDPOINTS = {
         'vehicles': 'DOTT_VEHICLES', 
         'trips': 'DOTT_TRIPS', 
         'vehicles/status': 'DOTT_VEHICLES_STATUS', 
-        'events/historical': 'DOTT_EVENTS', 
+        'events': 'DOTT_EVENTS', 
         'telemetry': 'DOTT_TELEMETRY'
     },
     'bolt': {

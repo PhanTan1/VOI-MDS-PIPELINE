@@ -21,13 +21,14 @@ WITH combined_staging AS (
 
     UNION ALL
 
-    -- 2. DOTT (Fixed: Injected missing trip_id column)
+    -- 2. DOTT 
     SELECT 
         COALESCE(v.vehicle_id, d.device_id)::TEXT AS vehicle_id, 
         COALESCE(v.vehicle_type, d.vehicle_type, 'bicycle')::TEXT AS vehicle_type, 
         'Dott'::TEXT AS provider_name, d.vehicle_state, d.event_type, d.lat, d.lon, d.trip_id, d.reported_at
     FROM (
-        SELECT device_id, vehicle_state, event_type, trip_id, lat, lon, reported_at, NULL as vehicle_type FROM {{ ref('stg_dott_events') }}
+        -- THE FIX: Changed 'NULL as vehicle_type' to 'vehicle_type'
+        SELECT device_id, vehicle_state, event_type, trip_id, lat, lon, reported_at, vehicle_type FROM {{ ref('stg_dott_events') }}
         UNION ALL
         SELECT device_id, vehicle_state, event_type, NULL as trip_id, lat, lon, reported_at, vehicle_type FROM {{ ref('stg_dott_vehicles_status') }}
     ) d
@@ -56,13 +57,29 @@ WITH combined_staging AS (
     FROM {{ ref('stg_poppy_vehicles_status') }}
 ),
 
--- THE CHANGE DETECTION: Collapses rows if nothing changed (Fixes Poppy drift)
+deduplicated_staging AS (
+    SELECT DISTINCT ON (vehicle_id, provider_name, reported_at)
+        *
+    FROM combined_staging
+    -- TIE-BREAKER: Prioritize 'real' events over generic 'telemetry' or 'unknown' states
+    ORDER BY 
+        vehicle_id, 
+        provider_name, 
+        reported_at DESC, 
+        CASE 
+            WHEN event_type IN ('trip_start', 'trip_end', 'user_pick_up', 'user_drop_off') THEN 1
+            WHEN event_type IS NOT NULL THEN 2
+            ELSE 3
+        END ASC
+),
+
+-- STEP 2: Point Change Tracking to the DEDUPLICATED data, not the raw combined data
 change_tracking AS (
     SELECT *,
         LAG(vehicle_state) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) as prev_state,
         LAG(lat) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) as prev_lat,
         LAG(lon) OVER (PARTITION BY vehicle_id, provider_name ORDER BY reported_at ASC) as prev_lon
-    FROM combined_staging
+    FROM deduplicated_staging -- <--- THIS WAS THE ERROR (It was pointing to combined_staging)
 ),
 
 filtered_staging AS (
