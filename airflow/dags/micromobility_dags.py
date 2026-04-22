@@ -16,12 +16,16 @@ sys.path.append(os.path.dirname(__file__))
 from cosmos import DbtTaskGroup, ProjectConfig, ProfileConfig, RenderConfig
 from cosmos.profiles import PostgresUserPasswordProfileMapping
 from cosmos.constants import TestBehavior
+from cosmos.constants import LoadMode
 
 # Import the engine
 from utils.api_ingestion import extract_and_load
 
 # --- 1. CONFIGURATION ---
-project_cfg = ProjectConfig("/opt/airflow/voi_dbt")
+project_cfg = ProjectConfig(
+    dbt_project_path="/opt/airflow/voi_dbt",
+    manifest_path="/opt/airflow/voi_dbt/target/manifest.json" # Ensure this path is correct
+)
 profile_cfg = ProfileConfig(
     profile_name="voi_mds", 
     target_name="prod",
@@ -29,6 +33,10 @@ profile_cfg = ProfileConfig(
         conn_id="postgres_raw", 
         profile_args={"schema": "MICROMOBILITY_STAGING"} 
     )
+)
+render_config=RenderConfig(
+    select=[f"path:models/staging/{folder_name}"],
+    load_method=LoadMode.DBT_MANIFEST # Use the pre-compiled manifest
 )
 
 PROVIDERS = ['voi', 'dott', 'bolt', 'poppy']
