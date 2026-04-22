@@ -1,0 +1,154 @@
+VOI-MDS-PIPELINE/
+├── .DS_Store
+├── .env
+├── .gitignore
+├── Dockerfile
+├── README.md
+├── airflow/
+│   ├── .DS_Store
+│   ├── config/
+│   │   ├── airflow.cfg
+│   ├── dags/
+│   │   ├── .DS_Store
+│   │   ├── json
+│   │   ├── micromobility_dags.py
+│   │   ├── utils/
+│   │   │   ├── __init__.py
+│   │   │   ├── api_ingestion.py
+│   ├── logs/
+│   │   ├── dag_id=mds_ingestion_hourly/
+│   │   │   ├── run_id=manual__2026-04-08T13:09:08.692239+00:00/
+│   │   │   │   ├── task_id=raw_ingestion.voi_ingestion.fetch_voi_events_historical/
+│   │   │   │   │   ├── attempt=1.log
+│   ├── plugins/
+│   ├── scripts/
+│   │   ├── voi_api_client.py
+├── config/
+│   ├── airflow.cfg
+├── dbt_project/
+│   ├── .DS_Store
+│   ├── .user.yml
+│   ├── dbt_project.yml
+│   ├── logs/
+│   │   ├── dbt.log
+│   ├── macros/
+│   │   ├── generate_schema_name.sql
+│   ├── models/
+│   │   ├── .DS_Store
+│   │   ├── marts/
+│   │   │   ├── fct_all_trips.sql
+│   │   │   ├── fct_vehicles_status.sql
+│   │   │   ├── marts.yml
+│   │   ├── staging/
+│   │   │   ├── .DS_Store
+│   │   │   ├── Bolt/
+│   │   │   │   ├── stg_bolt_events.sql
+│   │   │   │   ├── stg_bolt_status_changes.sql
+│   │   │   │   ├── stg_bolt_telemetry.sql
+│   │   │   │   ├── stg_bolt_trips.sql
+│   │   │   │   ├── stg_bolt_vehicles.sql
+│   │   │   ├── Dott/
+│   │   │   │   ├── .DS_Store
+│   │   │   │   ├── stg_dott_events.sql
+│   │   │   │   ├── stg_dott_telemetry.sql
+│   │   │   │   ├── stg_dott_trips.sql
+│   │   │   │   ├── stg_dott_vehicles.sql
+│   │   │   │   ├── stg_dott_vehicles_status.sql
+│   │   │   ├── Poppy/
+│   │   │   │   ├── stg_poppy_trips.sql
+│   │   │   │   ├── stg_poppy_vehicles.sql
+│   │   │   │   ├── stg_poppy_vehicles_status.sql
+│   │   │   ├── Voi/
+│   │   │   │   ├── stg_voi_events.sql
+│   │   │   │   ├── stg_voi_trips.sql
+│   │   │   │   ├── stg_voi_vehicles.sql
+│   │   │   │   ├── stg_voi_vehicles_status.sql
+│   │   │   ├── sources.yml
+│   ├── profiles.yml
+│   ├── target/
+│   │   ├── compiled/
+│   │   │   ├── voi_mds/
+│   │   │   │   ├── models/
+│   │   │   │   │   ├── marts/
+│   │   │   │   │   │   ├── fct_all_trips.sql
+│   │   │   │   │   │   ├── fct_vehicles_status.sql
+│   │   │   │   │   │   ├── marts.yml/
+│   │   │   │   │   │   │   ├── not_null_fct_all_trips__START_TS_.sql
+│   │   │   │   │   │   │   ├── not_null_fct_all_trips__TRIP_ID_.sql
+│   │   │   │   │   │   │   ├── not_null_fct_all_trips__VEHICLE_ID_.sql
+│   │   │   │   │   │   │   ├── not_null_fct_vehicles_status__UID_.sql
+│   │   │   │   │   │   │   ├── not_null_fct_vehicles_status__VEHICLE_ID_.sql
+│   │   │   │   │   │   │   ├── unique_fct_all_trips__TRIP_ID_.sql
+│   │   │   │   │   │   │   ├── unique_fct_vehicles_status__UID_.sql
+│   │   │   │   │   ├── staging/
+│   │   │   │   │   │   ├── Bolt/
+│   │   │   │   │   │   │   ├── stg_bolt_events.sql
+│   │   │   │   │   │   │   ├── stg_bolt_status_changes.sql
+│   │   │   │   │   │   │   ├── stg_bolt_telemetry.sql
+│   │   │   │   │   │   │   ├── stg_bolt_trips.sql
+│   │   │   │   │   │   │   ├── stg_bolt_vehicles.sql
+│   │   │   │   │   │   ├── Dott/
+│   │   │   │   │   │   │   ├── stg_dott_events.sql
+│   │   │   │   │   │   │   ├── stg_dott_telemetry.sql
+│   │   │   │   │   │   │   ├── stg_dott_trips.sql
+│   │   │   │   │   │   │   ├── stg_dott_vehicles.sql
+│   │   │   │   │   │   │   ├── stg_dott_vehicles_status.sql
+│   │   │   │   │   │   ├── Poppy/
+│   │   │   │   │   │   │   ├── stg_poppy_trips.sql
+│   │   │   │   │   │   │   ├── stg_poppy_vehicles.sql
+│   │   │   │   │   │   │   ├── stg_poppy_vehicles_status.sql
+│   │   │   │   │   │   ├── Voi/
+│   │   │   │   │   │   │   ├── stg_voi_events.sql
+│   │   │   │   │   │   │   ├── stg_voi_trips.sql
+│   │   │   │   │   │   │   ├── stg_voi_vehicles.sql
+│   │   │   │   │   │   │   ├── stg_voi_vehicles_status.sql
+│   │   ├── graph.gpickle
+│   │   ├── graph_summary.json
+│   │   ├── manifest.json
+│   │   ├── partial_parse.msgpack
+│   │   ├── run/
+│   │   │   ├── voi_mds/
+│   │   │   │   ├── models/
+│   │   │   │   │   ├── marts/
+│   │   │   │   │   │   ├── fct_all_trips.sql
+│   │   │   │   │   │   ├── fct_vehicles_status.sql
+│   │   │   │   │   ├── staging/
+│   │   │   │   │   │   ├── Bolt/
+│   │   │   │   │   │   │   ├── stg_bolt_events.sql
+│   │   │   │   │   │   │   ├── stg_bolt_status_changes.sql
+│   │   │   │   │   │   │   ├── stg_bolt_telemetry.sql
+│   │   │   │   │   │   │   ├── stg_bolt_trips.sql
+│   │   │   │   │   │   │   ├── stg_bolt_vehicles.sql
+│   │   │   │   │   │   ├── Dott/
+│   │   │   │   │   │   │   ├── stg_dott_events.sql
+│   │   │   │   │   │   │   ├── stg_dott_telemetry.sql
+│   │   │   │   │   │   │   ├── stg_dott_trips.sql
+│   │   │   │   │   │   │   ├── stg_dott_vehicles.sql
+│   │   │   │   │   │   │   ├── stg_dott_vehicles_status.sql
+│   │   │   │   │   │   ├── Poppy/
+│   │   │   │   │   │   │   ├── stg_poppy_trips.sql
+│   │   │   │   │   │   │   ├── stg_poppy_vehicles.sql
+│   │   │   │   │   │   │   ├── stg_poppy_vehicles_status.sql
+│   │   │   │   │   │   ├── Voi/
+│   │   │   │   │   │   │   ├── stg_voi_events.sql
+│   │   │   │   │   │   │   ├── stg_voi_trips.sql
+│   │   │   │   │   │   │   ├── stg_voi_vehicles.sql
+│   │   │   │   │   │   │   ├── stg_voi_vehicles_status.sql
+│   │   ├── run_results.json
+│   │   ├── semantic_manifest.json
+├── docker-compose.yaml
+├── logs/
+│   ├── dbt.log
+├── plugins/
+├── requirements.txt
+├── script_manual/
+│   ├── .DS_Store
+│   ├── bulk_load_telemetry.py
+│   ├── download_telemetry_dott.py
+│   ├── import_production_dump.py
+│   ├── init_db.py
+│   ├── logs/
+│   │   ├── dbt.log
+│   ├── manual_backfill.py
+
+
