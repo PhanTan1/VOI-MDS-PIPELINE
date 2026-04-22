@@ -17,7 +17,7 @@ SELECT DISTINCT
     
     'Poppy' AS provider_name,
     'available' AS vehicle_state,
-    'telemetry' AS event_type,
+    'unspecified' AS event_type,
     (s.item->>'lat')::DOUBLE PRECISION AS lat,
     (s.item->>'lon')::DOUBLE PRECISION AS lon,
     NULL AS trip_id,
