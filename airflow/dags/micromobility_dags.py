@@ -34,10 +34,6 @@ profile_cfg = ProfileConfig(
         profile_args={"schema": "MICROMOBILITY_STAGING"} 
     )
 )
-render_config=RenderConfig(
-    select=[f"path:models/staging/{folder_name}"],
-    load_method=LoadMode.DBT_MANIFEST # Use the pre-compiled manifest
-)
 
 PROVIDERS = ['voi', 'dott', 'bolt', 'poppy']
 
@@ -105,7 +101,8 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
                 project_config=project_cfg,
                 profile_config=profile_cfg,
                 render_config=RenderConfig(
-                    select=[f"path:models/staging/{folder_name}"]
+                    select=[f"path:models/staging/{folder_name}"],
+                    load_method=LoadMode.DBT_MANIFEST
                 )
             )
 
@@ -114,7 +111,10 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
         group_id="gold_marts",
         project_config=project_cfg,
         profile_config=profile_cfg,
-        render_config=RenderConfig(select=["path:models/marts"])
+        render_config=RenderConfig(
+            select=["path:models/marts"],
+            load_method=LoadMode.DBT_MANIFEST
+        )
     )
 
     # --- UPDATED DEPENDENCY FLOW ---
