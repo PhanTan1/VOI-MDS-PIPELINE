@@ -102,7 +102,9 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
                 profile_config=profile_cfg,
                 render_config=RenderConfig(
                     select=[f"path:models/staging/{folder_name}"],
-                    load_method=LoadMode.DBT_MANIFEST
+                    load_method=LoadMode.DBT_MANIFEST,
+                    emit_upstream_tasks=True, 
+                    select=['path:models', 'path:seeds'],
                 )
             )
 
