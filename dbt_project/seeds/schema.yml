@@ -1,0 +1,15 @@
+version: 2
+
+seeds:
+  - name: voi_lost_vehicles
+    columns:
+      - name: TRIP_ID
+        tests:
+          - unique
+          - not_null
+  - name: dott_lost_vehicles
+    columns:
+      - name: TRIP_ID
+        tests:
+          - unique
+          - not_null
