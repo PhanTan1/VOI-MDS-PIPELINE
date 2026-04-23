@@ -6,7 +6,6 @@ try:
     from airflow.sdk import TaskGroup
 except ImportError:
     from airflow.utils.task_group import TaskGroup
-from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.python import PythonOperator
 
 # Add dags folder to path so utils can be found
@@ -25,6 +24,7 @@ project_cfg = ProjectConfig(
     dbt_project_path="/opt/airflow/voi_dbt",
     manifest_path="/opt/airflow/voi_dbt/target/manifest.json" 
 )
+
 profile_cfg = ProfileConfig(
     profile_name="mds", 
     target_name="prod",
@@ -71,7 +71,12 @@ DAILY_ENDPOINTS = {
 }
 
 # --- 2. DAGS ---
-with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), schedule='@hourly', catchup=False) as dag_hourly:
+with DAG(
+    'micromobility_hourly_ingestion', 
+    start_date=datetime(2025, 1, 1), 
+    schedule='@hourly', 
+    catchup=False
+) as dag_hourly:
     
     bronze_lanes = {}
     silver_lanes = {}
@@ -88,7 +93,7 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
                     )
             bronze_lanes[provider] = provider_bronze
 
-    # 2. SILVER LAYER: Parallel Transformation
+    # 2. SILVER LAYER: Parallel Transformation (dbt build mode)
     with TaskGroup("silver_layer") as silver:
         for provider in PROVIDERS:
             folder_name = provider.capitalize() 
@@ -104,7 +109,7 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
                 )
             )
 
-    # 3. GOLD LAYER: Merged Analytics
+    # 3. GOLD LAYER: Merged Analytics (dbt build mode + seeds)
     gold = DbtTaskGroup(
         group_id="gold_marts",
         project_config=project_cfg,
@@ -116,12 +121,17 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
         )
     )
 
-    # --- UPDATED DEPENDENCY FLOW ---
+    # --- DEPENDENCY FLOW ---
     for provider in PROVIDERS:
         bronze_lanes[provider] >> silver_lanes[provider]
         silver_lanes[provider] >> gold
 
-with DAG('micromobility_daily_batch', start_date=datetime(2025, 1, 1), schedule='0 3 * * *', catchup=False) as dag_daily:
+with DAG(
+    'micromobility_daily_batch', 
+    start_date=datetime(2025, 1, 1), 
+    schedule='0 3 * * *', 
+    catchup=False
+) as dag_daily:
     for ep, table in DAILY_ENDPOINTS['poppy'].items():
         PythonOperator(
             task_id=f'fetch_daily_{ep.replace("/", "_")}',

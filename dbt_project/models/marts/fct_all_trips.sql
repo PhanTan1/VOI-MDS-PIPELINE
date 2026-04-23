@@ -11,7 +11,7 @@ WITH all_providers AS (
     SELECT 
         t.trip_id::TEXT, 
         -- THE FIX: Double quotes force Postgres to respect the exact case from the seed CSV
-        COALESCE(t.vehicle_short_id, p."VEHICLE_ID")::TEXT AS vehicle_id, 
+        COALESCE(p."VEHICLE_ID", t.vehicle_short_id)::TEXT AS vehicle_id, 
         COALESCE(t.vehicle_type, p."VEHICLE_TYPE")::TEXT AS vehicle_type, 
         t.provider_name::TEXT,
         t.start_ts::TIMESTAMP, 
@@ -33,7 +33,7 @@ WITH all_providers AS (
     SELECT 
         t.trip_id::TEXT, 
         -- THE FIX: Check the Dott seed for the UUID replacement, otherwise use the original ID
-        COALESCE(t.vehicle_short_id, p_dott."VEHICLE_ID")::TEXT AS vehicle_id,
+        COALESCE(p_dott."VEHICLE_ID", t.vehicle_short_id)::TEXT AS vehicle_id,
         t.vehicle_type::TEXT, 
         t.provider_name::TEXT,
         t.start_ts::TIMESTAMP, 
@@ -65,7 +65,7 @@ WITH all_providers AS (
     SELECT 
         t.trip_id::TEXT, 
         -- THE FIX: Check the Bolt seed for the replacement, otherwise use original
-        COALESCE(t.vehicle_short_id, p_bolt."VEHICLE_ID")::TEXT AS vehicle_id, 
+        COALESCE(p_bolt."VEHICLE_ID", t.vehicle_short_id)::TEXT AS vehicle_id,
         CASE 
             WHEN t.vehicle_type = 'scooter_standing' THEN 'scooter'
             ELSE t.vehicle_type 
