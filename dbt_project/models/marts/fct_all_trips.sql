@@ -29,10 +29,11 @@ WITH all_providers AS (
 
     UNION ALL
 
-    -- 2. DOTT (13 Columns) - Stitched & Cleaned
+   -- 2. DOTT (13 Columns) - Stitched & Cleaned
     SELECT 
         t.trip_id::TEXT, 
-        t.vehicle_short_id::TEXT AS vehicle_id,
+        -- THE FIX: Check the Dott seed for the UUID replacement, otherwise use the original ID
+        COALESCE(t.vehicle_short_id, p_dott."VEHICLE_ID")::TEXT AS vehicle_id,
         t.vehicle_type::TEXT, 
         t.provider_name::TEXT,
         t.start_ts::TIMESTAMP, 
@@ -55,6 +56,8 @@ WITH all_providers AS (
         )::GEOMETRY AS route_geom
     FROM {{ ref('stg_dott_trips') }} t
     LEFT JOIN {{ ref('stg_dott_telemetry') }} tel ON t.trip_id = tel.trip_id
+    -- JOIN the Dott seed specifically here
+    LEFT JOIN {{ ref('dott_lost_vehicles') }} p_dott ON t.trip_id = p_dott."TRIP_ID"
 
     UNION ALL
 
