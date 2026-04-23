@@ -15,3 +15,10 @@ seeds:
         tests:
           - unique
           - not_null
+  - name: bolt_lost_vehicles
+    columns:
+      - name: TRIP_ID
+        quote: true
+        tests:
+          - unique
+          - not_null

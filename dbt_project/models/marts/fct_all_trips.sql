@@ -64,7 +64,8 @@ WITH all_providers AS (
     -- 3. BOLT (13 Columns) - Standardized vehicle_type
     SELECT 
         t.trip_id::TEXT, 
-        t.vehicle_short_id::TEXT AS vehicle_id, 
+        -- THE FIX: Check the Bolt seed for the replacement, otherwise use original
+        COALESCE(t.vehicle_short_id, p_bolt."VEHICLE_ID")::TEXT AS vehicle_id, 
         CASE 
             WHEN t.vehicle_type = 'scooter_standing' THEN 'scooter'
             ELSE t.vehicle_type 
@@ -90,6 +91,8 @@ WITH all_providers AS (
             )
         )::GEOMETRY AS route_geom
     FROM {{ ref('stg_bolt_trips') }} t
+    -- JOIN the Bolt seed specifically here
+    LEFT JOIN {{ ref('bolt_lost_vehicles') }} p_bolt ON t.trip_id = p_bolt."TRIP_ID"
 
     UNION ALL
 
