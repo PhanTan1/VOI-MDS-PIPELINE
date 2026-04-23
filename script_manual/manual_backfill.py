@@ -195,7 +195,7 @@ def run_backfill(start_date, end_date):
 if __name__ == "__main__":
     # --- CONFIGURATION ---
     # Start small to test the fixes!
-    START = datetime(2026, 4, 15, 10)
-    END = datetime(2026, 4, 15, 12)
+    START = datetime(2026, 4, 7, 0)
+    END = datetime(2026, 4, 21, 20)
     
     run_backfill(START, END)

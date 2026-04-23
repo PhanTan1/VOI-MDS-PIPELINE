@@ -7,22 +7,25 @@
 }}
 
 WITH all_providers AS (
-    -- 1. VOI (13 Columns)
+    -- 1. VOI (13 Columns) - Patched with historical seed data
     SELECT 
-        trip_id::TEXT, 
-        vehicle_short_id::TEXT AS vehicle_id, 
-        vehicle_type::TEXT, 
-        provider_name::TEXT,
-        start_ts::TIMESTAMP, 
-        end_ts::TIMESTAMP, 
-        trip_duration::NUMERIC, 
-        trip_distance_meters::FLOAT,
-        start_lat::FLOAT, 
-        start_lon::FLOAT, 
-        end_lat::FLOAT, 
-        end_lon::FLOAT, 
-        route_geom::GEOMETRY
-    FROM {{ ref('stg_voi_trips') }}
+        t.trip_id::TEXT, 
+        -- THE FIX: Double quotes force Postgres to respect the exact case from the seed CSV
+        COALESCE(t.vehicle_short_id, p."VEHICLE_ID")::TEXT AS vehicle_id, 
+        COALESCE(t.vehicle_type, p."VEHICLE_TYPE")::TEXT AS vehicle_type, 
+        t.provider_name::TEXT,
+        t.start_ts::TIMESTAMP, 
+        t.end_ts::TIMESTAMP, 
+        t.trip_duration::NUMERIC, 
+        t.trip_distance_meters::FLOAT,
+        t.start_lat::FLOAT, 
+        t.start_lon::FLOAT, 
+        t.end_lat::FLOAT, 
+        t.end_lon::FLOAT, 
+        t.route_geom::GEOMETRY
+    FROM {{ ref('stg_voi_trips') }} t
+    -- THE FIX: Double quotes around "TRIP_ID"
+    LEFT JOIN {{ ref('voi_lost_vehicles') }} p ON t.trip_id = p."TRIP_ID"
 
     UNION ALL
 
@@ -40,7 +43,6 @@ WITH all_providers AS (
         t.start_lon::FLOAT, 
         t.end_lat::FLOAT, 
         t.end_lon::FLOAT,
-        -- Stitch App Start/End to IoT Route and remove stationary pings
         ST_RemoveRepeatedPoints(
             CASE 
                 WHEN tel.telemetry_route_geom IS NOT NULL THEN
@@ -106,7 +108,6 @@ WITH all_providers AS (
     FROM {{ ref('stg_poppy_trips') }}
 ),
 
--- THE FIX: Global Deduplication (Squashes Dott's overlapping API results)
 deduplicated_trips AS (
     SELECT DISTINCT ON (trip_id)
         *
