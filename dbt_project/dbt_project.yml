@@ -1,10 +1,10 @@
 # dbt_project.yml
-name: 'voi_mds'
+name: 'mds'
 version: '1.0.0'
 config-version: 2
 
-# This must match the name used in your profiles.yml
-profile: 'voi_mds'
+
+profile: 'mds'
 
 model-paths: ["models"]
 analysis-paths: ["analyses"]
@@ -18,7 +18,7 @@ clean-targets:
   - "dbt_packages"
 
 models:
-  voi_mds:
+  mds:
     # This configuration applies to everything in models/staging/
     staging:
       +materialized: view
@@ -35,3 +35,8 @@ quoting:
   database: true
   schema: true
   identifier: true
+
+seeds:
+  mds:                  
+    +schema: MICROMOBILITY_STAGING
+    +quote_columns: true

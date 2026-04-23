@@ -27,7 +27,7 @@ project_cfg = ProjectConfig(
     manifest_path="/opt/airflow/voi_dbt/target/manifest.json" # Ensure this path is correct
 )
 profile_cfg = ProfileConfig(
-    profile_name="voi_mds", 
+    profile_name="mds", 
     target_name="prod",
     profile_mapping=PostgresUserPasswordProfileMapping(
         conn_id="postgres_raw", 

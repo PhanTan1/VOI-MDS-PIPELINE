@@ -1,4 +1,4 @@
-voi_mds:
+mds:
   outputs:
     dev:
       type: postgres
