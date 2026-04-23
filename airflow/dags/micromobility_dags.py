@@ -24,7 +24,7 @@ from utils.api_ingestion import extract_and_load
 # --- 1. CONFIGURATION ---
 project_cfg = ProjectConfig(
     dbt_project_path="/opt/airflow/voi_dbt",
-    manifest_path="/opt/airflow/voi_dbt/target/manifest.json" # Ensure this path is correct
+    manifest_path="/opt/airflow/voi_dbt/target/manifest.json" 
 )
 profile_cfg = ProfileConfig(
     profile_name="mds", 
@@ -55,8 +55,8 @@ HOURLY_ENDPOINTS = {
         'vehicles': 'BOLT_VEHICLES', 
         'trips': 'BOLT_TRIPS', 
         'events/historical': 'BOLT_EVENTS', 
-        'status_changes': 'BOLT_STATUS_CHANGES', # MDS 1.2
-        'telemetry': 'BOLT_TELEMETRY'           # MDS 2.0 - Added for Routing logic
+        'status_changes': 'BOLT_STATUS_CHANGES', 
+        'telemetry': 'BOLT_TELEMETRY'           
     },
     'poppy': {
         'free_bike_status': 'POPPY_FREE_BIKE_STATUS'
@@ -78,7 +78,6 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
     silver_lanes = {}
 
     # 1. BRONZE LAYER: Parallel Extraction
-    # Automatically creates tasks for the new Bolt telemetry and status_changes endpoints
     with TaskGroup("bronze_layer") as bronze:
         for provider in PROVIDERS:
             with TaskGroup(group_id=provider) as provider_bronze:
@@ -91,7 +90,6 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
             bronze_lanes[provider] = provider_bronze
 
     # 2. SILVER LAYER: Parallel Transformation
-    # Cosmos will automatically include stg_bolt_telemetry.sql and stg_bolt_status_changes.sql
     with TaskGroup("silver_layer") as silver:
         for provider in PROVIDERS:
             folder_name = provider.capitalize() 
@@ -101,10 +99,9 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
                 project_config=project_cfg,
                 profile_config=profile_cfg,
                 render_config=RenderConfig(
+                    # FIX: Removed the duplicate select and seeds from here
                     select=[f"path:models/staging/{folder_name}"],
-                    load_method=LoadMode.DBT_MANIFEST,
-                    emit_upstream_tasks=True, 
-                    select=['path:models', 'path:seeds'],
+                    load_method=LoadMode.DBT_MANIFEST
                 )
             )
 
@@ -114,7 +111,7 @@ with DAG('micromobility_hourly_ingestion', start_date=datetime(2025, 1, 1), sche
         project_config=project_cfg,
         profile_config=profile_cfg,
         render_config=RenderConfig(
-            select=["path:models/marts"],
+            select=["path:models/marts", "path:seeds"],
             load_method=LoadMode.DBT_MANIFEST
         )
     )
